@@ -1,6 +1,6 @@
 # Voxel1 Prospect Desk — first working slice
 
-A local, dependency-free prototype with two separate service pipelines: **Training** and **BIM Services**. Each product has its own editable ICP, a user-triggered company search, public contact fields where available, and manually recorded interest status.
+A small prototype with two separate service pipelines: **Training** and **BIM Services**. Each product has its own editable ICP, a user-triggered company search, public contact fields where available, and manually recorded interest status. SQLite is the local default; set `DATABASE_URL` to a PostgreSQL URL for persistent hosted storage.
 
 ## Run
 
@@ -9,6 +9,8 @@ Requires Python 3.10 or newer. From `D:\sale automation`:
 ```powershell
 python server.py
 ```
+
+For PostgreSQL, first run `python -m pip install -r requirements.txt`, then set `DATABASE_URL` in the environment. Do not put a database URL in source files or screenshots. If `DATABASE_URL` is set but connection fails, startup fails rather than silently switching to SQLite.
 
 Open <http://127.0.0.1:8001>. Data is stored locally in `data/voxel1.db`. To use another port, set `VOXEL1_PORT` before starting the server.
 

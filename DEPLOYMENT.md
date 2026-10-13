@@ -2,9 +2,14 @@
 
 The Vercel "Other" import screen is not sufficient for this repository. `server.py` is a long-running Python HTTP server; the frontend calls its `/api` routes, and SQLite needs persistent storage. This procedure deploys the **current prototype** as a small password-protected demo, not as a production sales platform.
 
-1. In Render, create a **Web Service** from `MaheshBabu-VOXEL1/sales_automation`, branch `main`, root directory `./`, runtime **Python**. Choose a **paid instance that supports a persistent disk**. Do not choose a free instance for data you need to keep.
-2. Set build command to `python -m compileall -q server.py` and start command to `python server.py`.
-3. Attach a persistent disk mounted at `/opt/render/project/src/data`. The application stores its database at `/opt/render/project/src/data/voxel1.db` by default. Alternatively, set `VOXEL1_DB` to an absolute path on your disk. Check the mount and database path match before using the app.
+1. In Render, create a **Web Service** from `MaheshBabu-VOXEL1/sales_automation`, branch `main`, root directory left blank, runtime **Python**. A paid web instance is needed for the SQLite disk option; a separate PostgreSQL database can also provide persistence.
+2. Set build command to `pip install -r requirements.txt` and start command to `python server.py`.
+3. Choose one storage setup:
+
+   - **Render PostgreSQL:** Create a Render Postgres database in the **same region** as the web service. In the web service's Environment page, set `DATABASE_URL` to that database's **Internal Database URL**. Save and redeploy. This selects PostgreSQL; the old local SQLite file is not imported. Do not share the URL or put it in GitHub. Use a plan with a retention period suitable for your data; Render's free Postgres databases expire after 30 days.
+   - **SQLite on a paid persistent disk:** Attach a disk mounted at `/opt/render/project/src/data`. The app stores `voxel1.db` there by default. Do not set `DATABASE_URL` for this option. A Free web service cannot attach a persistent disk.
+
+   The current Render app contains test data only, so no SQLite-to-PostgreSQL import is needed. If real data is added before switching, export and migrate it first.
 4. Set `VOXEL1_HOST=0.0.0.0`. Choose one access mode:
 
    - **Open without login:** set `VOXEL1_PUBLIC_NO_AUTH=1`. This overrides any existing `VOXEL1_AUTH_USER` and `VOXEL1_AUTH_PASSWORD` values. Anyone who reaches the public URL can view contact details, edit ICPs and interest statuses, and start searches. Use only for an intentionally public demo without sensitive data.
