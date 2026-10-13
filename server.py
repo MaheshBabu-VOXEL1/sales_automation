@@ -33,6 +33,7 @@ AUTH_PASSWORD = os.environ.get("VOXEL1_AUTH_PASSWORD", "")
 PUBLIC_NO_AUTH = os.environ.get("VOXEL1_PUBLIC_NO_AUTH", "") == "1"
 USER_AGENT = "Voxel1ProspectingPrototype/0.1 (local internal research)"
 OVERPASS = "https://overpass-api.de/api/interpreter"
+OVERPASS_BACKUP = "https://overpass.private.coffee/api/interpreter"
 COUNTRIES = {"US": "USA", "AE": "UAE", "SA": "Saudi Arabia", "IN": "India", "SG": "Singapore"}
 # A bounded five-country sample for the free public-map adapter. This is not
 # country-wide coverage; a licensed discovery provider is needed for that.
@@ -127,6 +128,10 @@ def init_db() -> None:
             )
 
 
+class MapConnectionError(RuntimeError):
+    """Transport failure; distinct from HTTP rejection or rate limiting."""
+
+
 def public_get(url: str, params: dict | None = None, data: bytes | None = None) -> object:
     if params:
         url += "?" + urllib.parse.urlencode(params)
@@ -145,7 +150,7 @@ def public_get(url: str, params: dict | None = None, data: bytes | None = None) 
         explanation = explanations.get(exc.code, "the public map service rejected the request")
         raise RuntimeError(f"HTTP {exc.code}: {explanation}.") from exc
     except (urllib.error.URLError, TimeoutError) as exc:
-        raise RuntimeError(f"Could not connect to the public map service: {exc.reason if isinstance(exc, urllib.error.URLError) else exc}.") from exc
+        raise MapConnectionError(f"Could not connect to the public map service: {exc.reason if isinstance(exc, urllib.error.URLError) else exc}.") from exc
     except json.JSONDecodeError as exc:
         raise RuntimeError("The public map service returned an invalid response.") from exc
 
@@ -212,6 +217,7 @@ def find_companies(icp: dict) -> dict:
     companies = []
     coverage = []
     supported_count = 0
+    endpoint = OVERPASS
     for country_name in icp["countries"]:
         location = LOCATION_BY_COUNTRY.get(country_name)
         if not location:
@@ -225,7 +231,17 @@ def find_companies(icp: dict) -> dict:
         query = f"[out:json][timeout:20];\n(\n{selectors});\nout center 40;"
         data = urllib.parse.urlencode({"data": query}).encode()
         try:
-            result = public_get(OVERPASS, data=data)
+            try:
+                result = public_get(endpoint, data=data)
+            except MapConnectionError as primary_error:
+                if endpoint == OVERPASS_BACKUP:
+                    raise
+                # Switch once for this search, not for HTTP errors such as 429.
+                endpoint = OVERPASS_BACKUP
+                try:
+                    result = public_get(endpoint, data=data)
+                except RuntimeError as backup_error:
+                    raise RuntimeError(f"Primary connection failed: {primary_error} Backup failed: {backup_error}") from backup_error
         except RuntimeError as exc:
             coverage.append({"country": country, "city": city, "found": 0, "error": str(exc)})
             continue

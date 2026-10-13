@@ -30,3 +30,5 @@ The Vercel "Other" import screen is not sufficient for this repository. `server.
 The open mode makes all app data and write actions available to visitors; changing the URL name is not access control. For a real CRM, add individual accounts, access controls, audit logs, backups and a durable database strategy.
 
 Current search uses a public OpenStreetMap Overpass city sample, not full-country coverage. It may return few contacts or fail temporarily. Apollo, Brave and AI integrations are not included.
+
+If the primary map connection fails, the search switches once to the documented global Private.coffee Overpass instance (`https://overpass.private.coffee/api/interpreter`) and uses that instance for remaining countries in the request. Only public location and industry queries are sent. HTTP rejections, including rate limits, do not trigger this fallback. TLS certificate verification remains enabled. A successful deployment does not confirm outbound access: verify one small search from the deployed app.

@@ -140,6 +140,25 @@ class AppTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "First error: HTTP 429"):
                 server.find_companies({"categories": ["architecture"], "countries": ["India"]})
 
+    def test_network_failure_uses_backup_for_remaining_countries(self):
+        responses = [server.MapConnectionError("Network is unreachable"), {"elements": []}, {"elements": []}]
+        with patch.object(server, "public_get", side_effect=responses) as provider, patch.object(server.time, "sleep"):
+            result = server.find_companies({"categories": ["architecture"], "countries": ["India", "Singapore"]})
+        self.assertEqual([call.args[0] for call in provider.call_args_list],
+                         [server.OVERPASS, server.OVERPASS_BACKUP, server.OVERPASS_BACKUP])
+        self.assertEqual(len(result["coverage"]), 2)
+
+    def test_backup_failure_preserves_both_errors(self):
+        with patch.object(server, "public_get", side_effect=[server.MapConnectionError("Network is unreachable"), RuntimeError("Backup timeout")]):
+            with self.assertRaisesRegex(RuntimeError, "Primary connection failed:.*Backup failed: Backup timeout"):
+                server.find_companies({"categories": ["architecture"], "countries": ["India"]})
+
+    def test_rate_limit_does_not_trigger_backup(self):
+        with patch.object(server, "public_get", side_effect=RuntimeError("HTTP 429")) as provider:
+            with self.assertRaises(RuntimeError):
+                server.find_companies({"categories": ["architecture"], "countries": ["India"]})
+        self.assertEqual(provider.call_count, 1)
+
     def test_map_http_error_identifies_rate_limit(self):
         error = urllib.error.HTTPError(server.OVERPASS, 429, "Too Many Requests", {}, None)
         with patch.object(server.urllib.request, "urlopen", side_effect=error):
