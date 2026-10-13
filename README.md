@@ -28,6 +28,8 @@ The **Interested / Not interested** dropdown is set by a human after an actual i
 
 ## Limits before real deployment
 
-This runs on localhost with no login or multi-user access control. Do not expose the server to a network or use it as a production CRM. It does not send email, contact leads, call anyone, connect to Claude or Apollo, verify contact details, or automate voice calls. A production build needs authenticated users, approved ICP versions, richer discovery/enrichment providers, qualification review, provider licensing checks, privacy controls and audited outreach before outbound work.
+This runs on localhost without a password by default. Public binding requires a shared HTTP Basic Auth username and password, suitable only for a small private demo over HTTPS. It is not a production multi-user CRM: there are no individual accounts, access audit logs, password reset, rate limits or database backups managed by the app. It does not send email, contact leads, call anyone, connect to Claude or Apollo, verify contact details, or automate voice calls. A production build needs authenticated users, approved ICP versions, richer discovery/enrichment providers, qualification review, provider licensing checks, privacy controls and audited outreach before outbound work.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the current Render deployment procedure. The current Python server and SQLite database cannot be deployed unchanged as a working Vercel project.
 
 The public Overpass service is volunteer-operated and unsuitable for bulk prospecting. Search is bounded and user-triggered here. For full country-wide discovery or significant volume, choose a contracted data source and verify its five-country coverage, or operate an appropriate OpenStreetMap extract. See the [OpenStreetMap Overpass guidance](https://wiki.openstreetmap.org/wiki/Overpass_API). This prototype makes no Nominatim calls.

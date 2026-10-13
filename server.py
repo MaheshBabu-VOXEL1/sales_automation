@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import json
 import os
+import base64
+import binascii
+import hmac
 import sqlite3
 import threading
 import time
@@ -22,7 +25,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("VOXEL1_DB", str(ROOT / "data" / "voxel1.db")))
 HOST = os.environ.get("VOXEL1_HOST", "127.0.0.1")
-PORT = int(os.environ.get("VOXEL1_PORT", "8001"))
+PORT = int(os.environ.get("VOXEL1_PORT", os.environ.get("PORT", "8001")))
+AUTH_USER = os.environ.get("VOXEL1_AUTH_USER", "")
+AUTH_PASSWORD = os.environ.get("VOXEL1_AUTH_PASSWORD", "")
 USER_AGENT = "Voxel1ProspectingPrototype/0.1 (local internal research)"
 OVERPASS = "https://overpass-api.de/api/interpreter"
 COUNTRIES = {"US": "USA", "AE": "UAE", "SA": "Saudi Arabia", "IN": "India", "SG": "Singapore"}
@@ -219,6 +224,38 @@ def find_companies(icp: dict) -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def authorized(self) -> bool:
+        if not (AUTH_USER and AUTH_PASSWORD):
+            return True
+        value = self.headers.get("Authorization", "")
+        try:
+            scheme, token = value.split(" ", 1)
+            if scheme.lower() != "basic":
+                raise ValueError("Unsupported authentication")
+            decoded = base64.b64decode(token, validate=True).decode("utf-8")
+            user, password = decoded.split(":", 1)
+            if hmac.compare_digest(user, AUTH_USER) and hmac.compare_digest(password, AUTH_PASSWORD):
+                return True
+        except (ValueError, UnicodeError, binascii.Error):
+            pass
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="Voxel1 private demo"')
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return False
+
+    def same_origin_write(self) -> bool:
+        # Reject browser-initiated cross-site writes, including a form POST.
+        origin = self.headers.get("Origin")
+        host = self.headers.get("Host", "")
+        if self.headers.get("Sec-Fetch-Site", "").lower() == "cross-site" or (
+            origin and origin not in (f"https://{host}", f"http://{host}")
+        ):
+            self.respond(403, {"error": "Cross-site requests are not allowed."})
+            return False
+        return True
+
     def respond(self, status: int, payload: object) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -243,6 +280,8 @@ class Handler(BaseHTTPRequestHandler):
         return parts[2]
 
     def do_GET(self) -> None:
+        if not self.authorized():
+            return
         path = urllib.parse.urlparse(self.path).path
         if path == "/" or path in ("/app.js", "/style.css", "/extra.css"):
             filename = "index.html" if path == "/" else path[1:]
@@ -270,6 +309,8 @@ class Handler(BaseHTTPRequestHandler):
         self.respond(404, {"error": "Not found"})
 
     def do_PUT(self) -> None:
+        if not self.authorized() or not self.same_origin_write():
+            return
         parts = urllib.parse.urlparse(self.path).path.strip("/").split("/")
         try:
             service = self.service_from_path(parts)
@@ -285,6 +326,8 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(400, {"error": str(exc)})
 
     def do_POST(self) -> None:
+        if not self.authorized() or not self.same_origin_write():
+            return
         parts = urllib.parse.urlparse(self.path).path.strip("/").split("/")
         try:
             service = self.service_from_path(parts)
@@ -314,6 +357,8 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(502, {"error": str(exc)})
 
     def do_PATCH(self) -> None:
+        if not self.authorized() or not self.same_origin_write():
+            return
         parts = urllib.parse.urlparse(self.path).path.strip("/").split("/")
         try:
             service = self.service_from_path(parts)
@@ -336,6 +381,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    if HOST not in ("127.0.0.1", "localhost", "::1") and not (AUTH_USER and AUTH_PASSWORD):
+        raise SystemExit("Public binding requires VOXEL1_AUTH_USER and VOXEL1_AUTH_PASSWORD.")
     init_db()
     print(f"Voxel1 prototype: http://{HOST}:{PORT}")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

@@ -1,5 +1,6 @@
 import json
 import io
+import base64
 import tempfile
 import unittest
 import urllib.parse
@@ -20,18 +21,33 @@ class AppTest(unittest.TestCase):
         server.DB_PATH = self.old_db
         self.temp.cleanup()
 
-    def request(self, method, path, body=None):
+    def request(self, method, path, body=None, headers=None):
         data = json.dumps(body).encode() if body is not None else None
         handler = object.__new__(server.Handler)
         handler.path = path
-        handler.headers = {"Content-Length": str(len(data or b""))}
+        handler.headers = {"Content-Length": str(len(data or b"")), **(headers or {})}
         handler.rfile = io.BytesIO(data or b"")
         handler.wfile = io.BytesIO()
         handler.send_response = lambda code: setattr(handler, "response_code", code)
         handler.send_header = lambda *args: None
         handler.end_headers = lambda: None
         getattr(handler, "do_" + method)()
-        return handler.response_code, json.loads(handler.wfile.getvalue())
+        raw = handler.wfile.getvalue()
+        return handler.response_code, json.loads(raw) if raw else None
+
+    def test_private_demo_requires_credentials_and_rejects_cross_site_writes(self):
+        with patch.object(server, "AUTH_USER", "team"), patch.object(server, "AUTH_PASSWORD", "secret"):
+            code, _ = self.request("GET", "/api/services/training/leads")
+            self.assertEqual(code, 401)
+            token = base64.b64encode(b"team:wrong").decode()
+            code, _ = self.request("GET", "/api/services/training/leads", headers={"Authorization": f"Basic {token}"})
+            self.assertEqual(code, 401)
+            token = base64.b64encode(b"team:secret").decode()
+            headers = {"Authorization": f"Basic {token}", "Host": "example.onrender.com"}
+            code, leads = self.request("GET", "/api/services/training/leads", headers=headers)
+            self.assertEqual((code, leads), (200, []))
+            code, _ = self.request("POST", "/api/services/training/discover", headers={**headers, "Origin": "https://evil.example"})
+            self.assertEqual(code, 403)
 
     def test_service_separation_and_manual_interest(self):
         source = [{
