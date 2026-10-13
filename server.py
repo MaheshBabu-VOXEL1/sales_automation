@@ -134,8 +134,20 @@ def public_get(url: str, params: dict | None = None, data: bytes | None = None) 
     try:
         with urllib.request.urlopen(req, timeout=25) as response:
             return json.load(response)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Public map service unavailable: {exc}") from exc
+    except urllib.error.HTTPError as exc:
+        explanations = {
+            400: "the map service rejected the search query",
+            429: "the public map service is rate limiting requests",
+            502: "the public map service is temporarily unavailable",
+            503: "the public map service is temporarily unavailable",
+            504: "the public map search timed out",
+        }
+        explanation = explanations.get(exc.code, "the public map service rejected the request")
+        raise RuntimeError(f"HTTP {exc.code}: {explanation}.") from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise RuntimeError(f"Could not connect to the public map service: {exc.reason if isinstance(exc, urllib.error.URLError) else exc}.") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("The public map service returned an invalid response.") from exc
 
 
 def validate_icp(payload: dict) -> dict:
@@ -241,7 +253,8 @@ def find_companies(icp: dict) -> dict:
     if not supported_count:
         raise ValueError("No search provider is connected for the selected countries. The free prototype currently searches USA, UAE, Saudi Arabia, India and Singapore city samples.")
     if not any("error" not in item for item in coverage):
-        raise RuntimeError("All supported public-map searches failed. Try again later.")
+        first_error = next(item["error"] for item in coverage if item["city"])
+        raise RuntimeError(f"All supported public-map searches failed. First error: {first_error}")
     return {"companies": companies, "coverage": coverage}
 
 

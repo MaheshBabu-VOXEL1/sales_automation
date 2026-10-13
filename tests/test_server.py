@@ -6,6 +6,7 @@ import tempfile
 import types
 import unittest
 import urllib.parse
+import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -133,6 +134,17 @@ class AppTest(unittest.TestCase):
         self.assertEqual(result["coverage"][0]["country"], "US")
         self.assertIn("error", result["coverage"][0])
         self.assertEqual(len(result["coverage"]), 5)
+
+    def test_all_map_failures_report_underlying_cause(self):
+        with patch.object(server, "public_get", side_effect=RuntimeError("HTTP 429: the public map service is rate limiting requests.")):
+            with self.assertRaisesRegex(RuntimeError, "First error: HTTP 429"):
+                server.find_companies({"categories": ["architecture"], "countries": ["India"]})
+
+    def test_map_http_error_identifies_rate_limit(self):
+        error = urllib.error.HTTPError(server.OVERPASS, 429, "Too Many Requests", {}, None)
+        with patch.object(server.urllib.request, "urlopen", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "HTTP 429:.*rate limiting"):
+                server.public_get(server.OVERPASS, data=b"data=test")
 
     def test_country_focus_controls_search_and_reports_unsupported(self):
         icp = server.validate_icp({"name": "Training", "countries": ["India", "Germany"], "categories": ["architecture"]})
