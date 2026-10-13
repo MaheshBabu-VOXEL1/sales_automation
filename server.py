@@ -224,6 +224,15 @@ def find_companies(icp: dict) -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def do_HEAD(self) -> None:
+        # Hosting probes use HEAD before the browser supplies demo credentials.
+        if urllib.parse.urlparse(self.path).path != "/":
+            self.send_response(404)
+        else:
+            self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def authorized(self) -> bool:
         if not (AUTH_USER and AUTH_PASSWORD):
             return True

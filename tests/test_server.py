@@ -49,6 +49,13 @@ class AppTest(unittest.TestCase):
             code, _ = self.request("POST", "/api/services/training/discover", headers={**headers, "Origin": "https://evil.example"})
             self.assertEqual(code, 403)
 
+    def test_host_probe_can_check_root_without_credentials(self):
+        with patch.object(server, "AUTH_USER", "team"), patch.object(server, "AUTH_PASSWORD", "secret"):
+            code, body = self.request("HEAD", "/")
+            self.assertEqual((code, body), (200, None))
+            code, body = self.request("HEAD", "/api/services/training/leads")
+            self.assertEqual((code, body), (404, None))
+
     def test_service_separation_and_manual_interest(self):
         source = [{
             "source_id": "node/123", "company": "Example Architects", "category": "architect",
