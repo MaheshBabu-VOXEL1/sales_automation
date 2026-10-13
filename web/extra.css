@@ -1,0 +1,12 @@
+.target-countries { grid-column: 1 / -1; border: 0; margin: 0; padding: 0; }
+.target-countries legend { color: #526178; font-size: 12px; font-weight: 700; padding: 0 0 9px; }
+.custom-countries { margin-top: 12px; max-width: 540px; }
+.field-title { display: block; color: #526178; font-size: 12px; font-weight: 700; margin-bottom: 9px; }
+.country-list { display: flex; gap: 8px; flex-wrap: wrap; }
+.country-list span { border: 1px solid #dbe6f5; background: #f6f9ff; border-radius: 8px; padding: 8px 10px; color: #415c83; font-size: 12px; font-weight: 700; }
+.target-countries small { display: block; color: #9aa6b5; margin-top: 9px; font-size: 11px; }
+.country-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 8px; margin-bottom: 17px; }
+.country-summary > span { display: flex; justify-content: space-between; gap: 6px; align-items: center; padding: 10px 12px; border: 1px solid #e1e8f1; background: #fff; border-radius: 9px; font-size: 11px; }
+.country-summary strong { color: #3f536d; }
+.country-summary small { color: #8695a7; white-space: nowrap; }
+@media (max-width: 760px) { .country-summary { grid-template-columns: repeat(2, 1fr); } }

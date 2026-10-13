@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voxel1 | Prospect Desk</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/extra.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">V</span><span>VOXEL1 <small>Prospect Desk</small></span></div>
+    <span class="top-note">Internal research workspace</span>
+  </header>
+  <main class="shell">
+    <section id="home" class="home">
+      <div class="eyebrow">SALES WORKSPACE</div>
+      <h1>Choose a service to get started.</h1>
+      <p class="intro">Keep Training and BIM Services prospects in their own simple pipelines.</p>
+      <div class="service-grid">
+        <button class="service-card" data-service="training">
+          <span class="card-icon training-icon">T</span>
+          <span class="card-copy"><strong>Training</strong><small>Find companies for BIM training and track their response.</small></span>
+          <span class="arrow">↗</span>
+        </button>
+        <button class="service-card" data-service="bim">
+          <span class="card-icon bim-icon">B</span>
+          <span class="card-copy"><strong>BIM Services</strong><small>Find companies for BIM delivery and track their response.</small></span>
+          <span class="arrow">↗</span>
+        </button>
+      </div>
+      <div class="home-footnote">Public contact fields are shown only when available. Interest is recorded by your team after a real response.</div>
+    </section>
+
+    <section id="workspace" class="workspace hidden">
+      <button id="back" class="back-button">← All services</button>
+      <div class="page-heading"><div><div class="eyebrow" id="service-eyebrow">SERVICE WORKSPACE</div><h1 id="service-title"></h1><p>Set your ideal customer profile, find companies and track interest.</p></div><span class="source-badge">Source: OpenStreetMap city samples</span></div>
+
+      <div class="section-head"><div><span class="step">01</span><h2>Ideal customer profile</h2></div><span class="hint">Saved separately for each product</span></div>
+      <form id="icp-form" class="panel icp-form">
+        <label class="field field-wide">ICP name<input name="name" maxlength="100" required></label>
+        <fieldset class="target-countries"><legend>Countries of focus for this product</legend><div class="checks"><label><input type="checkbox" name="countries" value="USA"> USA</label><label><input type="checkbox" name="countries" value="UAE"> UAE</label><label><input type="checkbox" name="countries" value="Saudi Arabia"> Saudi Arabia</label><label><input type="checkbox" name="countries" value="India"> India</label><label><input type="checkbox" name="countries" value="Singapore"> Singapore</label></div><label class="field custom-countries">Other countries <span class="optional">(comma-separated)</span><input name="other_countries" placeholder="e.g. Germany, Australia"></label><small>Any country can be saved in the ICP. The current free search can discover only city samples in the five listed countries.</small></fieldset>
+        <fieldset class="industry-field"><legend>Target industries</legend><div class="checks"><label><input type="checkbox" name="categories" value="architecture"> Architecture</label><label><input type="checkbox" name="categories" value="construction"> Construction</label><label><input type="checkbox" name="categories" value="engineering"> Engineering</label><label><input type="checkbox" name="categories" value="real_estate"> Real estate</label><label><input type="checkbox" name="categories" value="education"> Education</label></div></fieldset>
+        <label class="field">Company size: minimum employees<input name="employee_min" type="number" min="1" max="1000000" placeholder="Any size"></label>
+        <label class="field">Company size: maximum employees<input name="employee_max" type="number" min="1" max="1000000" placeholder="Any size"></label>
+        <label class="field field-full">Decision-maker titles <span class="optional">(comma-separated)</span><input name="titles" maxlength="500" placeholder="e.g. BIM Manager, Project Manager, Director"></label>
+        <label class="field">Positive keywords<input name="keywords" maxlength="500" placeholder="e.g. Revit, infrastructure"></label>
+        <label class="field">Exclude keywords / industries<input name="exclusions" maxlength="500" placeholder="e.g. residential-only"></label>
+        <label class="field field-full">Campaign goal<input name="goal" maxlength="500" placeholder="e.g. Book a discovery meeting"></label>
+        <label class="field field-full">Notes <span class="optional">(for your team; not used as a search filter yet)</span><textarea name="notes" maxlength="500" rows="2" placeholder="What makes a good customer for this service?"></textarea></label>
+        <div class="form-actions"><span id="icp-updated" class="muted">Country and industry selections guide this free search; other ICP fields are saved for later qualification.</span><div><button type="submit" class="button secondary">Save ICP</button><button type="button" id="discover" class="button primary">Search selected countries</button></div></div>
+      </form>
+      <p id="message" class="message hidden" role="status"></p>
+
+      <div class="section-head leads-heading"><div><span class="step">02</span><h2>Companies & interest</h2></div><span class="hint">Interest is marked manually</span></div>
+      <div class="stats"><div><strong id="stat-total">0</strong><span>Companies found</span></div><div><strong id="stat-contact">0</strong><span>With email or phone</span></div><div><strong id="stat-interested">0</strong><span>Interested</span></div><div><strong id="stat-not">0</strong><span>Not interested</span></div></div>
+      <div id="country-summary" class="country-summary" aria-label="Results by country"></div>
+      <div class="table-panel">
+        <div class="table-toolbar"><div class="tabs" role="group" aria-label="Filter companies"><button data-filter="all" class="active">All</button><button data-filter="new">Unreviewed</button><button data-filter="interested">Interested</button><button data-filter="not_interested">Not interested</button></div><input id="lead-search" type="search" placeholder="Find a company" aria-label="Find a company"></div>
+        <div class="table-scroll"><table><thead><tr><th>Company</th><th>Location</th><th>Public contact</th><th>Interest status</th><th>Source</th></tr></thead><tbody id="lead-rows"></tbody></table></div>
+        <div id="empty" class="empty">No companies yet. Set your ICP and choose “Search selected countries.”</div>
+      </div>
+      <p class="disclaimer">The current free search supports one city sample each in USA (New York), UAE (Dubai), Saudi Arabia (Riyadh), India (Mumbai) and Singapore. Other focus countries remain saved in your ICP but need a discovery provider before they can be searched. This does not cover every business in a country. OpenStreetMap lists businesses, not verified decision-makers. Missing email or phone means unavailable from this source. A found contact does not indicate permission to send messages. Data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>.</p>
+    </section>
+  </main>
+  <script src="/app.js?v=3" defer></script>
+</body>
+</html>

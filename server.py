@@ -1,0 +1,341 @@
+"""Small, dependency-free Voxel1 prospecting prototype.
+
+Run with: python server.py
+Public OpenStreetMap data is used only after a user starts a search.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent
+DB_PATH = Path(os.environ.get("VOXEL1_DB", str(ROOT / "data" / "voxel1.db")))
+HOST = os.environ.get("VOXEL1_HOST", "127.0.0.1")
+PORT = int(os.environ.get("VOXEL1_PORT", "8001"))
+USER_AGENT = "Voxel1ProspectingPrototype/0.1 (local internal research)"
+OVERPASS = "https://overpass-api.de/api/interpreter"
+COUNTRIES = {"US": "USA", "AE": "UAE", "SA": "Saudi Arabia", "IN": "India", "SG": "Singapore"}
+# A bounded five-country sample for the free public-map adapter. This is not
+# country-wide coverage; a licensed discovery provider is needed for that.
+TARGET_LOCATIONS = (
+    ("US", "New York", 40.7128, -74.0060),
+    ("AE", "Dubai", 25.2048, 55.2708),
+    ("SA", "Riyadh", 24.7136, 46.6753),
+    ("IN", "Mumbai", 19.0760, 72.8777),
+    ("SG", "Singapore", 1.3521, 103.8198),
+)
+SERVICES = {"training": "Training", "bim": "BIM Services"}
+CATEGORIES = {
+    "architecture": [("office", "architect"), ("craft", "architect")],
+    "construction": [("office", "construction_company"), ("craft", "construction")],
+    "engineering": [("office", "engineer"), ("office", "engineering")],
+    "real_estate": [("office", "estate_agent"), ("office", "property_management")],
+    "education": [("amenity", "college"), ("amenity", "training")],
+}
+DEFAULTS = {
+    "training": {"name": "BIM Training ICP", "categories": ["architecture", "construction", "engineering"], "notes": "Firms that may need BIM training."},
+    "bim": {"name": "BIM Services ICP", "categories": ["architecture", "construction", "engineering"], "notes": "Firms that may need BIM delivery support."},
+}
+COUNTRY_ALIASES = {
+    "us": "USA", "usa": "USA", "united states": "USA", "united states of america": "USA",
+    "ae": "UAE", "uae": "UAE", "united arab emirates": "UAE",
+    "sa": "Saudi Arabia", "saudi arabia": "Saudi Arabia",
+    "in": "India", "india": "India",
+    "sg": "Singapore", "singapore": "Singapore",
+}
+LOCATION_BY_COUNTRY = {COUNTRIES[code]: (code, city, lat, lon) for code, city, lat, lon in TARGET_LOCATIONS}
+search_lock = threading.Lock()
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def connect() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(DB_PATH, timeout=10)
+    db.row_factory = sqlite3.Row
+    db.execute("PRAGMA foreign_keys = ON")
+    return db
+
+
+def init_db() -> None:
+    with connect() as db:
+        db.executescript("""
+            CREATE TABLE IF NOT EXISTS icps (
+                service TEXT PRIMARY KEY, name TEXT NOT NULL, country TEXT NOT NULL,
+                city TEXT NOT NULL, categories TEXT NOT NULL, notes TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS leads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                service TEXT NOT NULL, source_id TEXT NOT NULL,
+                company TEXT NOT NULL, category TEXT NOT NULL,
+                city TEXT NOT NULL, country TEXT NOT NULL,
+                email TEXT, phone TEXT, website TEXT, source_url TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'new', notes TEXT NOT NULL DEFAULT '',
+                discovered_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                UNIQUE(service, source_id)
+            );
+        """)
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(icps)")}
+        if "profile_json" not in columns:
+            db.execute("ALTER TABLE icps ADD COLUMN profile_json TEXT NOT NULL DEFAULT '{}'")
+        for service, item in DEFAULTS.items():
+            profile = {"countries": list(COUNTRIES.values()), "employee_min": "", "employee_max": "", "titles": "", "keywords": "", "exclusions": "", "goal": ""}
+            db.execute(
+                "INSERT OR IGNORE INTO icps (service, name, country, city, categories, notes, updated_at, profile_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (service, item["name"], "ALL", "Configured focus", json.dumps(item["categories"]), item["notes"], now(), json.dumps(profile)),
+            )
+
+
+def public_get(url: str, params: dict | None = None, data: bytes | None = None) -> object:
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as response:
+            return json.load(response)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Public map service unavailable: {exc}") from exc
+
+
+def validate_icp(payload: dict) -> dict:
+    name = str(payload.get("name", "")).strip()[:100]
+    categories = payload.get("categories", [])
+    notes = str(payload.get("notes", "")).strip()[:500]
+    if not name:
+        raise ValueError("Enter an ICP name.")
+    if not isinstance(categories, list) or not categories or any(c not in CATEGORIES for c in categories):
+        raise ValueError("Choose at least one supported industry.")
+    raw_countries = payload.get("countries", [])
+    if not isinstance(raw_countries, list) or not 1 <= len(raw_countries) <= 30:
+        raise ValueError("Choose one or more countries of focus (up to 30).")
+    countries = []
+    seen = set()
+    for raw in raw_countries:
+        if not isinstance(raw, str):
+            raise ValueError("Country names must be text.")
+        country = raw.strip()
+        if not 2 <= len(country) <= 80 or any(character in country for character in "<>/\\"):
+            raise ValueError("Enter valid country names of 2–80 characters.")
+        country = COUNTRY_ALIASES.get(country.casefold(), country)
+        if country.casefold() not in seen:
+            countries.append(country)
+            seen.add(country.casefold())
+    if not countries:
+        raise ValueError("Choose at least one country of focus.")
+    sizes = {}
+    for key in ("employee_min", "employee_max"):
+        value = payload.get(key, "")
+        if value in ("", None):
+            sizes[key] = ""
+        elif isinstance(value, bool) or not str(value).isdigit() or not 1 <= int(value) <= 1000000:
+            raise ValueError("Employee counts must be positive whole numbers.")
+        else:
+            sizes[key] = str(int(value))
+    if sizes["employee_min"] and sizes["employee_max"] and int(sizes["employee_min"]) > int(sizes["employee_max"]):
+        raise ValueError("Minimum employee count cannot exceed maximum.")
+    profile = {"countries": countries, **sizes}
+    for key in ("titles", "keywords", "exclusions", "goal"):
+        profile[key] = str(payload.get(key, "")).strip()[:500]
+    return {"name": name, "city": "Configured focus", "country": "CUSTOM", "categories": list(dict.fromkeys(categories)), "notes": notes, **profile}
+
+
+def get_icp(db: sqlite3.Connection, service: str) -> dict:
+    row = db.execute("SELECT * FROM icps WHERE service = ?", (service,)).fetchone()
+    result = dict(row)
+    result["categories"] = json.loads(result["categories"])
+    profile = json.loads(result["profile_json"] or "{}")
+    if not profile.get("countries"):
+        profile["countries"] = list(COUNTRIES.values())
+    for key in ("employee_min", "employee_max", "titles", "keywords", "exclusions", "goal"):
+        profile.setdefault(key, "")
+    result.update(profile)
+    return result
+
+
+def find_companies(icp: dict) -> dict:
+    # Search only the selected countries with available city-sample adapters.
+    # Public Overpass is not suitable for country-wide bulk prospecting.
+    filters = list(dict.fromkeys(pair for category in icp["categories"] for pair in CATEGORIES[category]))
+    companies = []
+    coverage = []
+    supported_count = 0
+    for country_name in icp["countries"]:
+        location = LOCATION_BY_COUNTRY.get(country_name)
+        if not location:
+            coverage.append({"country": country_name, "city": None, "found": 0, "error": "No discovery provider connected for this country."})
+            continue
+        country, city, lat, lon = location
+        if supported_count:
+            time.sleep(1)
+        supported_count += 1
+        selectors = "".join(f'  nwr(around:12000,{lat},{lon})["{key}"="{value}"]["name"];\n' for key, value in filters)
+        query = f"[out:json][timeout:20];\n(\n{selectors});\nout center 40;"
+        data = urllib.parse.urlencode({"data": query}).encode()
+        try:
+            result = public_get(OVERPASS, data=data)
+        except RuntimeError as exc:
+            coverage.append({"country": country, "city": city, "found": 0, "error": str(exc)})
+            continue
+        count = 0
+        for element in result.get("elements", []):
+            tags = element.get("tags", {})
+            name = tags.get("name", "").strip()
+            if not name:
+                continue
+            email = tags.get("contact:email") or tags.get("email") or None
+            phone = tags.get("contact:phone") or tags.get("phone") or None
+            website = tags.get("contact:website") or tags.get("website") or None
+            if website and not website.startswith(("https://", "http://")):
+                website = None
+            companies.append({
+                "source_id": f'{element["type"]}/{element["id"]}',
+                "company": name[:200], "category": next((tags.get(k) for k, _ in filters if tags.get(k)), "business")[:100],
+                "city": city, "country": country,
+                "email": email[:254] if email else None, "phone": phone[:100] if phone else None,
+                "website": website[:500] if website else None,
+                "source_url": f'https://www.openstreetmap.org/{element["type"]}/{element["id"]}',
+            })
+            count += 1
+        coverage.append({"country": country, "city": city, "found": count})
+    if not supported_count:
+        raise ValueError("No search provider is connected for the selected countries. The free prototype currently searches USA, UAE, Saudi Arabia, India and Singapore city samples.")
+    if not any("error" not in item for item in coverage):
+        raise RuntimeError("All supported public-map searches failed. Try again later.")
+    return {"companies": companies, "coverage": coverage}
+
+
+class Handler(BaseHTTPRequestHandler):
+    def respond(self, status: int, payload: object) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def read_json(self) -> dict:
+        size = int(self.headers.get("Content-Length", "0"))
+        if size < 1 or size > 20000:
+            raise ValueError("Invalid request size.")
+        payload = json.loads(self.rfile.read(size))
+        if not isinstance(payload, dict):
+            raise ValueError("Expected a JSON object.")
+        return payload
+
+    def service_from_path(self, parts: list[str]) -> str:
+        if len(parts) < 3 or parts[2] not in SERVICES:
+            raise ValueError("Choose Training or BIM Services.")
+        return parts[2]
+
+    def do_GET(self) -> None:
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/" or path in ("/app.js", "/style.css", "/extra.css"):
+            filename = "index.html" if path == "/" else path[1:]
+            mime = "text/html" if filename.endswith(".html") else "text/javascript" if filename.endswith(".js") else "text/css"
+            body = (ROOT / "web" / filename).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", mime + "; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        parts = path.strip("/").split("/")
+        try:
+            if parts[:2] != ["api", "services"]:
+                return self.respond(404, {"error": "Not found"})
+            service = self.service_from_path(parts)
+            with connect() as db:
+                if len(parts) == 4 and parts[3] == "icp":
+                    return self.respond(200, get_icp(db, service))
+                if len(parts) == 4 and parts[3] == "leads":
+                    rows = db.execute("SELECT * FROM leads WHERE service = ? ORDER BY updated_at DESC, id DESC", (service,)).fetchall()
+                    return self.respond(200, [dict(row) for row in rows])
+        except ValueError as exc:
+            return self.respond(400, {"error": str(exc)})
+        self.respond(404, {"error": "Not found"})
+
+    def do_PUT(self) -> None:
+        parts = urllib.parse.urlparse(self.path).path.strip("/").split("/")
+        try:
+            service = self.service_from_path(parts)
+            if parts[:2] != ["api", "services"] or parts[3:] != ["icp"]:
+                return self.respond(404, {"error": "Not found"})
+            icp = validate_icp(self.read_json())
+            with connect() as db:
+                profile = {key: icp[key] for key in ("countries", "employee_min", "employee_max", "titles", "keywords", "exclusions", "goal")}
+                db.execute("UPDATE icps SET name=?, country=?, city=?, categories=?, notes=?, profile_json=?, updated_at=? WHERE service=?",
+                           (icp["name"], icp["country"], icp["city"], json.dumps(icp["categories"]), icp["notes"], json.dumps(profile), now(), service))
+                return self.respond(200, get_icp(db, service))
+        except (ValueError, json.JSONDecodeError) as exc:
+            self.respond(400, {"error": str(exc)})
+
+    def do_POST(self) -> None:
+        parts = urllib.parse.urlparse(self.path).path.strip("/").split("/")
+        try:
+            service = self.service_from_path(parts)
+            if parts[:2] != ["api", "services"] or parts[3:] != ["discover"]:
+                return self.respond(404, {"error": "Not found"})
+            if not search_lock.acquire(blocking=False):
+                return self.respond(429, {"error": "Another search is running. Please try again shortly."})
+            try:
+                with connect() as db:
+                    icp = get_icp(db, service)
+                discovery = find_companies(icp)
+                companies = discovery["companies"]
+                inserted = 0
+                with connect() as db:
+                    for company in companies:
+                        cur = db.execute("""INSERT OR IGNORE INTO leads
+                            (service, source_id, company, category, city, country, email, phone, website, source_url, discovered_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (service, company["source_id"], company["company"], company["category"], company["city"], company["country"], company["email"], company["phone"], company["website"], company["source_url"], now(), now()))
+                        inserted += cur.rowcount
+                return self.respond(200, {"found": len(companies), "added": inserted, "source": "OpenStreetMap", "coverage": discovery["coverage"]})
+            finally:
+                search_lock.release()
+        except ValueError as exc:
+            self.respond(400, {"error": str(exc)})
+        except RuntimeError as exc:
+            self.respond(502, {"error": str(exc)})
+
+    def do_PATCH(self) -> None:
+        parts = urllib.parse.urlparse(self.path).path.strip("/").split("/")
+        try:
+            service = self.service_from_path(parts)
+            if parts[:4] != ["api", "services", service, "leads"] or len(parts) != 6 or parts[5] != "status":
+                return self.respond(404, {"error": "Not found"})
+            lead_id = int(parts[4])
+            payload = self.read_json()
+            status = payload.get("status")
+            notes = str(payload.get("notes", "")).strip()[:500]
+            if status not in ("new", "interested", "not_interested"):
+                raise ValueError("Invalid interest status.")
+            with connect() as db:
+                result = db.execute("UPDATE leads SET status=?, notes=?, updated_at=? WHERE id=? AND service=?",
+                                    (status, notes, now(), lead_id, service))
+                if not result.rowcount:
+                    return self.respond(404, {"error": "Lead not found"})
+                return self.respond(200, dict(db.execute("SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()))
+        except (ValueError, json.JSONDecodeError) as exc:
+            self.respond(400, {"error": str(exc)})
+
+
+if __name__ == "__main__":
+    init_db()
+    print(f"Voxel1 prototype: http://{HOST}:{PORT}")
+    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
