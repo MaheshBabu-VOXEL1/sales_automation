@@ -10,3 +10,61 @@
 .country-summary strong { color: #3f536d; }
 .country-summary small { color: #8695a7; white-space: nowrap; }
 @media (max-width: 760px) { .country-summary { grid-template-columns: repeat(2, 1fr); } }
+
+/* Phone layout: keep the ICP usable and present each lead without a wide table. */
+@media (max-width: 640px) {
+  .topbar { height: 64px; padding: 0 16px; }
+  .shell { min-width: 0; padding: 0 16px 48px; }
+  .home { margin-top: 48px; }
+  .home h1, .page-heading h1 { font-size: clamp(29px, 9vw, 38px); }
+  .service-grid { gap: 13px; margin-top: 28px; }
+  .service-card { min-height: 126px; padding: 20px 16px; gap: 14px; }
+  .card-icon { width: 43px; height: 43px; font-size: 20px; }
+  .card-copy strong { font-size: 18px; }
+  .card-copy small { font-size: 13px; }
+  .workspace { padding-top: 22px; }
+  .page-heading { display: block; margin: 22px 0 32px; }
+  .page-heading p { font-size: 14px; line-height: 1.5; }
+  .source-badge { display: inline-flex; margin-top: 16px; white-space: normal; }
+  .section-head { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .section-head h2 { font-size: 17px; }
+  .section-head .hint { margin-left: 41px; }
+  .icp-form { min-width: 0; padding: 16px; gap: 18px; }
+  .icp-form > *, .field { min-width: 0; }
+  .checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .checks label { min-width: 0; min-height: 44px; padding: 8px; line-height: 1.25; }
+  .checks input { flex: none; }
+  .custom-countries { max-width: none; }
+  .field input, .field select, .field textarea, #lead-search { font-size: 16px; }
+  .button { min-height: 44px; }
+  .form-actions { align-items: stretch; }
+  .form-actions > div { display: grid; grid-template-columns: 1fr; }
+  .form-actions .button { width: 100%; }
+  .stats { gap: 8px; }
+  .stats > div { min-width: 0; padding: 14px; }
+  .stats span { line-height: 1.35; }
+  .table-toolbar { padding: 12px; }
+  .tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 6px; }
+  .tabs button { min-height: 42px; padding: 8px; text-align: center; }
+  #lead-search { min-height: 44px; }
+  .table-scroll { overflow: visible; }
+  table, tbody, tr, td { display: block; width: 100%; min-width: 0; }
+  thead { display: none; }
+  tbody { padding: 12px; }
+  tr { border: 1px solid #e1e8f1; border-radius: 12px; overflow: hidden; margin-bottom: 12px; background: #fff; }
+  tr:last-child { margin-bottom: 0; }
+  td { display: block; padding: 11px 12px; border-top: 1px solid #edf1f5; overflow-wrap: anywhere; }
+  td:first-child { border-top: 0; }
+  td::before { content: attr(data-label); display: block; margin-bottom: 5px; color: #8793a4; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+  td strong, td small, td .contact-line, td > div { min-width: 0; }
+  td strong { font-size: 14px; margin-bottom: 3px; }
+  td .contact-line { overflow-wrap: anywhere; }
+  .status-select { width: 100%; max-width: none; min-height: 42px; font-size: 14px; }
+  .empty { padding: 32px 16px; }
+}
+
+@media (max-width: 380px) {
+  .country-summary { grid-template-columns: 1fr; }
+  .service-card { gap: 11px; }
+  .arrow { font-size: 18px; }
+}
