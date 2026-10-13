@@ -28,6 +28,7 @@ HOST = os.environ.get("VOXEL1_HOST", "127.0.0.1")
 PORT = int(os.environ.get("VOXEL1_PORT", os.environ.get("PORT", "8001")))
 AUTH_USER = os.environ.get("VOXEL1_AUTH_USER", "")
 AUTH_PASSWORD = os.environ.get("VOXEL1_AUTH_PASSWORD", "")
+PUBLIC_NO_AUTH = os.environ.get("VOXEL1_PUBLIC_NO_AUTH", "") == "1"
 USER_AGENT = "Voxel1ProspectingPrototype/0.1 (local internal research)"
 OVERPASS = "https://overpass-api.de/api/interpreter"
 COUNTRIES = {"US": "USA", "AE": "UAE", "SA": "Saudi Arabia", "IN": "India", "SG": "Singapore"}
@@ -234,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def authorized(self) -> bool:
-        if not (AUTH_USER and AUTH_PASSWORD):
+        if PUBLIC_NO_AUTH or not (AUTH_USER and AUTH_PASSWORD):
             return True
         value = self.headers.get("Authorization", "")
         try:
@@ -390,8 +391,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    if HOST not in ("127.0.0.1", "localhost", "::1") and not (AUTH_USER and AUTH_PASSWORD):
-        raise SystemExit("Public binding requires VOXEL1_AUTH_USER and VOXEL1_AUTH_PASSWORD.")
+    if HOST not in ("127.0.0.1", "localhost", "::1") and not (PUBLIC_NO_AUTH or (AUTH_USER and AUTH_PASSWORD)):
+        raise SystemExit("Public binding requires credentials or VOXEL1_PUBLIC_NO_AUTH=1.")
     init_db()
     print(f"Voxel1 prototype: http://{HOST}:{PORT}")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

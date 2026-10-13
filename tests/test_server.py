@@ -56,6 +56,12 @@ class AppTest(unittest.TestCase):
             code, body = self.request("HEAD", "/api/services/training/leads")
             self.assertEqual((code, body), (404, None))
 
+    def test_explicit_public_mode_opens_app_without_browser_login(self):
+        with patch.object(server, "PUBLIC_NO_AUTH", True), patch.object(server, "AUTH_USER", "team"), patch.object(server, "AUTH_PASSWORD", "secret"):
+            code, icp = self.request("GET", "/api/services/training/icp")
+            self.assertEqual(code, 200)
+            self.assertEqual(icp["service"], "training")
+
     def test_service_separation_and_manual_interest(self):
         source = [{
             "source_id": "node/123", "company": "Example Architects", "category": "architect",
