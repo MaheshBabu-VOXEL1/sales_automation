@@ -89,7 +89,7 @@ def discover(icp, service):
         # API terms do not permit retaining response data in our database.
         found.append({"source_id": "apollo/" + str(org["id"]), "company": str(org["name"])[:200],
                       "category": str(org.get("industry") or "business")[:100], "city": str(org.get("city") or "")[:100],
-                      "country": str(org.get("country") or "")[:100], "email": None, "phone": None,
+                      "country": str(org.get("country") or (countries[0] if len(countries) == 1 else ""))[:100], "email": None, "phone": None,
                       "website": website, "source_url": website,
                       "contact_name": "", "contact_title": "",
                       "evidence_url": ""})

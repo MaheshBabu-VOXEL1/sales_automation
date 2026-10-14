@@ -37,6 +37,18 @@ class ProviderSearchTest(unittest.TestCase):
         self.assertEqual(result["companies"][0]["evidence_url"], "")
         self.assertIsNone(result["companies"][0]["email"])
 
+    def test_single_country_filter_labels_results_when_apollo_omits_country(self):
+        def fake(url, _header, _key, _params):
+            if url.endswith("mixed_companies/search"):
+                return {"organizations": [{"id": "a", "name": "Architects", "website_url": "https://example.com"}]}
+            if url == provider_search.BRAVE:
+                return {"web": {"results": [{"url": "https://example.com/bim", "title": "BIM projects"}]}}
+            return {"people": []}
+        with patch.dict(os.environ, {"APOLLO_API_KEY": "secret", "BRAVE_SEARCH_API_KEY": "secret"}), patch.object(provider_search, "request_json", side_effect=fake):
+            result = provider_search.discover({"countries": ["India"]}, "bim")
+        self.assertEqual(result["companies"][0]["country"], "India")
+        self.assertEqual(result["coverage"][0]["found"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
