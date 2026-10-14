@@ -11,7 +11,7 @@ import re
 import urllib.error
 import urllib.request
 
-from provider_search import GEMINI, ProviderError, gemini_failure
+from provider_search import DEFAULT_GEMINI_MODEL, GEMINI, ProviderError, gemini_config, gemini_failure
 
 PURPOSES = ("First contact", "Follow-up")
 OFFER = {
@@ -61,7 +61,7 @@ def write_draft(lead, service, purpose, room_notes="", history=(), guidance=""):
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         raise ValueError("Set GEMINI_API_KEY on the server to write drafts with AI.")
-    model = os.environ.get("GEMINI_DRAFT_MODEL") or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    model = os.environ.get("GEMINI_DRAFT_MODEL") or os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
     if not re.fullmatch(r"[a-zA-Z0-9._-]+", model):
         raise ProviderError("Invalid Gemini model name.")
     facts = lead_facts(lead, service, room_notes, list(history))
@@ -79,7 +79,7 @@ def write_draft(lead, service, purpose, room_notes="", history=(), guidance=""):
         + (f"Team guidance (follow it unless it breaks the rules above): {guidance}\n" if guidance else "")
         + json.dumps(facts, ensure_ascii=False))
     request = {"contents": [{"parts": [{"text": instruction}]}],
-               "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": 1200, "thinkingConfig": {"thinkingBudget": 0}}}
+               "generationConfig": gemini_config(model, 3000)}
     req = urllib.request.Request(GEMINI + model + ":generateContent", data=json.dumps(request).encode(),
                                  headers={"x-goog-api-key": api_key, "Content-Type": "application/json"}, method="POST")
     try:

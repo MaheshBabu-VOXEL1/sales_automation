@@ -82,7 +82,7 @@ class ReviewTest(unittest.TestCase):
         self.assertIn("Apollo company search in USA, UAE, Saudi Arabia, India, Singapore", lead["match_reason"])
         self.assertIn("Brave found a page on alpha.test mentioning BIM or Revit; the page itself is not stored", lead["match_reason"])
         self.assertEqual(lead["source_url"], "https://alpha.test")
-        self.assertEqual((lead["ai_screened"], lead["ai_reason"], lead["ai_model"]), (1, "Architecture firm delivering client projects", "gemini-2.5-flash-lite"))
+        self.assertEqual((lead["ai_screened"], lead["ai_reason"], lead["ai_model"]), (1, "Architecture firm delivering client projects", provider_search.DEFAULT_GEMINI_MODEL))
         self.assertTrue(lead["screened_at"])
         self.assertEqual(lead["review_decision"], "active")
         # A later search without Gemini keeps the earlier recorded AI judgement.
