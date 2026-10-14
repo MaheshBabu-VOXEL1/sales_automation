@@ -12,6 +12,9 @@ from unittest.mock import MagicMock, patch
 
 import server
 
+LIMITS = {"VOXEL1_MONTHLY_SEARCH_LIMIT": "10", "VOXEL1_MONTHLY_APOLLO_REQUESTS": "200", "VOXEL1_MONTHLY_BRAVE_REQUESTS": "200"}
+CONFIRM = {"confirmed": True, "estimate": {"apollo": 11, "brave": 10, "gemini": 0}}
+
 
 class AppTest(unittest.TestCase):
     def setUp(self):
@@ -116,8 +119,8 @@ class AppTest(unittest.TestCase):
     def test_provider_search_saves_evidence_and_preserves_interest_on_repeat(self):
         company = {"source_id": "apollo/a", "company": "Example", "category": "architecture", "city": "Mumbai", "country": "India", "email": None, "phone": None, "website": "https://example.com", "source_url": "https://example.com/bim", "contact_name": "Alex", "contact_title": "BIM Manager", "evidence_url": "https://example.com/bim"}
         result = {"companies": [company], "coverage": [{"country": "India", "city": None, "found": 1}], "source": "Apollo + Brave"}
-        with patch.dict(server.os.environ, {"APOLLO_API_KEY": "test", "BRAVE_SEARCH_API_KEY": "test"}), patch.object(server.provider_search, "discover", return_value=result):
-            code, first = self.request("POST", "/api/services/training/discover")
+        with patch.dict(server.os.environ, {"APOLLO_API_KEY": "test", "BRAVE_SEARCH_API_KEY": "test", **LIMITS}), patch.object(server.provider_search, "discover", return_value=result):
+            code, first = self.request("POST", "/api/services/training/discover", CONFIRM)
             self.assertEqual((code, first["added"]), (200, 1))
             _, leads = self.request("GET", "/api/services/training/leads")
             lead_id = leads[0]["id"]
@@ -126,11 +129,11 @@ class AppTest(unittest.TestCase):
             company["contact_title"] = "Design Director"
             company["email"] = "alex@example.com"
             company["ai_screened"] = True
-            _, repeat = self.request("POST", "/api/services/training/discover")
+            _, repeat = self.request("POST", "/api/services/training/discover", CONFIRM)
             company["email"] = None
             company["contact_name"] = ""
             company["ai_screened"] = False
-            _, third = self.request("POST", "/api/services/training/discover")
+            _, third = self.request("POST", "/api/services/training/discover", CONFIRM)
         self.assertEqual(repeat["added"], 0)
         self.assertEqual(third["added"], 0)
         _, updated = self.request("GET", "/api/services/training/leads")

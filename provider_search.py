@@ -26,6 +26,41 @@ class ProviderError(RuntimeError):
     pass
 
 
+class BudgetExceeded(ProviderError):
+    """Raised before a provider request that the reserved search budget does not cover."""
+
+
+class Meter:
+    """Counts each provider request before it is sent and refuses any beyond the reservation.
+
+    A request is counted even if it then fails, because the provider may still meter it.
+    """
+
+    def __init__(self, allowance=None):
+        self.allowance = allowance  # None means unlimited (direct use in tests only).
+        self.calls = []
+
+    def used(self, provider):
+        return sum(call[0] == provider for call in self.calls)
+
+    def charge(self, provider, operation):
+        if self.allowance is not None and self.used(provider) >= self.allowance.get(provider, 0):
+            raise BudgetExceeded(f"Stopped before a {provider} request: this search's approved allowance is used up.")
+        self.calls.append((provider, operation))
+
+    def totals(self):
+        return {provider: self.used(provider) for provider in ("apollo", "brave", "gemini")}
+
+
+def estimate_requests(env=None):
+    """Worst-case provider requests for one Search companies click with the current settings."""
+    env = os.environ if env is None else env
+    enrich = env.get("APOLLO_ENRICH_DETAILS") == "1"
+    return {"apollo": 1 + LIMIT + (2 * ENRICH_LIMIT if enrich else 0),
+            "brave": LIMIT,
+            "gemini": LIMIT if env.get("GEMINI_API_KEY") else 0}
+
+
 def request_json(url, key_header, key, params):
     query = urllib.parse.urlencode(params, doseq=True)
     method = "POST" if url.startswith(APOLLO) and not url.endswith("/organizations/enrich") else "GET"
@@ -86,7 +121,8 @@ def gemini_buyer_candidate(org, service, hits, api_key):
         raise ProviderError("Gemini qualification failed; no uncertain candidate was saved. Check its API key, model and quota.") from exc
 
 
-def discover(icp, service):
+def discover(icp, service, meter=None):
+    meter = meter or Meter()
     apollo_key = os.environ.get("APOLLO_API_KEY", "")
     brave_key = os.environ.get("BRAVE_SEARCH_API_KEY", "")
     if not apollo_key or not brave_key:
@@ -104,6 +140,7 @@ def discover(icp, service):
         params["q_not_organization_keyword_tags[]"] = exclusions[:5]
     if icp.get("employee_min") or icp.get("employee_max"):
         params["organization_num_employees_ranges[]"] = f'{icp.get("employee_min") or 1},{icp.get("employee_max") or 1000000}'
+    meter.charge("apollo", "company_search")
     response = request_json(APOLLO + "/mixed_companies/search", "x-api-key", apollo_key, params)
     if not isinstance(response, dict) or not isinstance(response.get("organizations"), list):
         raise ProviderError("Apollo returned an unexpected company response.")
@@ -120,6 +157,7 @@ def discover(icp, service):
         domain = urllib.parse.urlparse(website).hostname
         query = f'site:{domain} "{SERVICE_TERMS[service][0]}" OR "{SERVICE_TERMS[service][1]}"'
         try:
+            meter.charge("brave", "web_search")
             evidence = request_json(BRAVE, "X-Subscription-Token", brave_key, {"q": query, "count": 5, "result_filter": "web"})
             root_domain = domain.removeprefix("www.")
             hits = [hit for hit in evidence.get("web", {}).get("results", [])
@@ -133,6 +171,7 @@ def discover(icp, service):
             continue  # Do not label a company relevant without a matching public page.
         if gemini_key:
             try:
+                meter.charge("gemini", "buyer_screen")
                 if not gemini_buyer_candidate(org, service, hits, gemini_key):
                     continue
             except ProviderError as exc:
@@ -148,6 +187,7 @@ def discover(icp, service):
                       "evidence_url": "", "ai_screened": bool(gemini_key)})
     for index, lead in enumerate(found):
         try:
+            meter.charge("apollo", "people_search")
             people = request_json(APOLLO + "/mixed_people/api_search", "x-api-key", apollo_key,
                                   {"organization_ids[]": [lead["source_id"].split("/", 1)[1]],
                                    "person_titles[]": titles[:8], "per_page": 3, "page": 1})
@@ -160,6 +200,7 @@ def discover(icp, service):
                 lead["contact_title"] = str(person.get("title") or "")[:200]
                 if enrich and index < ENRICH_LIMIT and person.get("id"):
                     try:
+                        meter.charge("apollo", "people_match")
                         detail = request_json(APOLLO + "/people/match", "x-api-key", apollo_key,
                                               {"id": person["id"], "reveal_personal_emails": "false", "reveal_phone_number": "false"})
                         enriched = detail.get("person") or {}
@@ -175,6 +216,7 @@ def discover(icp, service):
             warnings.append(str(exc))
         if enrich and index < ENRICH_LIMIT:
             try:
+                meter.charge("apollo", "organization_enrich")
                 organization = request_json(APOLLO + "/organizations/enrich", "x-api-key", apollo_key,
                                             {"domain": urllib.parse.urlparse(lead["website"]).hostname.removeprefix("www.")}).get("organization") or {}
                 if organization.get("city"):

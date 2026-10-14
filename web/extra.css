@@ -9,6 +9,14 @@
 .country-summary > span { display: flex; justify-content: space-between; gap: 6px; align-items: center; padding: 10px 12px; border: 1px solid #e1e8f1; background: #fff; border-radius: 9px; font-size: 11px; }
 .country-summary strong { color: #3f536d; }
 .country-summary small { color: #8695a7; white-space: nowrap; }
+.budget-panel { margin-top: 12px; padding: 14px 16px; font-size: 12px; color: #415c83; }
+.budget-panel h3 { margin: 0 0 9px; font-size: 13px; color: #15243b; }
+.budget-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.budget-grid > div { border: 1px solid #e1e8f1; border-radius: 9px; padding: 9px 11px; background: #f9fbfe; }
+.budget-grid strong { display: block; font-size: 12px; color: #3f536d; }
+.budget-grid small { display: block; color: #8695a7; margin-top: 3px; line-height: 1.4; }
+.budget-panel .budget-note { margin: 9px 0 0; color: #8692a3; line-height: 1.5; }
+.budget-panel .budget-blocked { margin: 9px 0 0; padding: 9px 11px; border-radius: 8px; background: #fff0ee; color: #ad4233; line-height: 1.5; }
 @media (min-width: 641px) {
   table { min-width: 1040px; }
   th:nth-child(2), td:nth-child(2) { min-width: 225px; }

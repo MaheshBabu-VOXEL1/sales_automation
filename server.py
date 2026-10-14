@@ -72,6 +72,17 @@ COUNTRY_ALIASES = {
 }
 LOCATION_BY_COUNTRY = {COUNTRIES[code]: (code, city, lat, lon) for code, city, lat, lon in TARGET_LOCATIONS}
 search_lock = threading.Lock()
+# Monthly request caps for paid providers. Only someone with access to the server
+# environment can change them. Unset or invalid values mean 0, so paid searches
+# stay blocked until a cap is deliberately configured.
+BUDGET_ENV = {
+    "searches": "VOXEL1_MONTHLY_SEARCH_LIMIT",
+    "apollo": "VOXEL1_MONTHLY_APOLLO_REQUESTS",
+    "brave": "VOXEL1_MONTHLY_BRAVE_REQUESTS",
+    "gemini": "VOXEL1_MONTHLY_GEMINI_REQUESTS",
+}
+PROVIDERS = ("apollo", "brave", "gemini")
+BUDGET_LOCK_ID = 4207001  # PostgreSQL advisory lock serializing reservations.
 
 
 def now() -> str:
@@ -131,6 +142,20 @@ def init_db() -> None:
             run(db, "ALTER TABLE leads ADD COLUMN IF NOT EXISTS ai_screened INTEGER NOT NULL DEFAULT 0")
         elif "ai_screened" not in {row["name"] for row in run(db, "PRAGMA table_info(leads)")}:
             run(db, "ALTER TABLE leads ADD COLUMN ai_screened INTEGER NOT NULL DEFAULT 0")
+        run(db, f"""CREATE TABLE IF NOT EXISTS search_runs (
+            id {identity} PRIMARY KEY,
+            service TEXT NOT NULL, month TEXT NOT NULL, status TEXT NOT NULL,
+            estimate_json TEXT NOT NULL, actual_json TEXT NOT NULL DEFAULT '{{}}',
+            error TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL, finished_at TEXT NOT NULL DEFAULT ''
+        )""")
+        run(db, f"""CREATE TABLE IF NOT EXISTS provider_usage (
+            id {identity} PRIMARY KEY,
+            run_id INTEGER NOT NULL, month TEXT NOT NULL,
+            provider TEXT NOT NULL, operation TEXT NOT NULL, created_at TEXT NOT NULL
+        )""")
+        # A reservation left open by a crash or restart keeps counting at its
+        # full estimate, because the requests it actually made are unknown.
+        run(db, "UPDATE search_runs SET status='interrupted', finished_at=? WHERE status='reserved'", (now(),))
         if DATABASE_URL:
             run(db, "ALTER TABLE icps ADD COLUMN IF NOT EXISTS profile_json TEXT NOT NULL DEFAULT '{}'")
         else:
@@ -212,6 +237,84 @@ def validate_icp(payload: dict) -> dict:
     for key in ("titles", "keywords", "exclusions", "goal"):
         profile[key] = str(payload.get(key, "")).strip()[:500]
     return {"name": name, "city": "Configured focus", "country": "CUSTOM", "categories": list(dict.fromkeys(categories)), "notes": notes, **profile}
+
+
+class BudgetBlocked(Exception):
+    """A paid search was refused before any provider request."""
+
+
+def month_key() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def budget_limits() -> dict:
+    limits = {}
+    for key, name in BUDGET_ENV.items():
+        value = os.environ.get(name, "").strip()
+        limits[key] = int(value) if value.isdigit() else 0
+    return limits
+
+
+def budget_status(db) -> dict:
+    """Usage this month. Finished runs count measured requests; open or interrupted runs hold their full estimate."""
+    month = month_key()
+    limits = budget_limits()
+    used = {provider: 0 for provider in PROVIDERS}
+    held = {provider: 0 for provider in PROVIDERS}
+    runs = run(db, "SELECT * FROM search_runs WHERE month=? ORDER BY id DESC", (month,)).fetchall()
+    for row in runs:
+        if row["status"] in ("completed", "failed"):
+            for provider, count in json.loads(row["actual_json"] or "{}").items():
+                used[provider] = used.get(provider, 0) + int(count)
+        else:
+            for provider, count in json.loads(row["estimate_json"]).items():
+                held[provider] = held.get(provider, 0) + int(count)
+    estimate = provider_search.estimate_requests()
+    reasons = []
+    if len(runs) + 1 > limits["searches"]:
+        reasons.append(f"Monthly search limit reached ({len(runs)} of {limits['searches']} used). Set {BUDGET_ENV['searches']} on the server to allow more." if limits["searches"]
+                       else f"No monthly search limit is set. Set {BUDGET_ENV['searches']} on the server before running paid searches.")
+    for provider in PROVIDERS:
+        need = estimate[provider]
+        if need and used[provider] + held[provider] + need > limits[provider]:
+            label = provider.capitalize()
+            remaining = max(limits[provider] - used[provider] - held[provider], 0)
+            reasons.append(f"{label}: this search may need up to {need} requests but only {remaining} remain this month. Raise {BUDGET_ENV[provider]} on the server to allow it." if limits[provider]
+                           else f"{label}: no monthly request limit is set. Set {BUDGET_ENV[provider]} on the server.")
+    recent = [{"id": row["id"], "service": row["service"], "status": row["status"], "estimate": json.loads(row["estimate_json"]),
+               "actual": json.loads(row["actual_json"] or "{}"), "error": row["error"], "started_at": row["started_at"]} for row in runs[:10]]
+    return {"month": month, "limits": limits, "used": used, "held": held, "searches_used": len(runs),
+            "estimate": estimate, "allowed": not reasons, "blocked_reasons": reasons, "recent": recent}
+
+
+def reserve_search(service: str) -> tuple[int, dict]:
+    """Atomically check the monthly caps and record a reservation; raises BudgetBlocked otherwise."""
+    with connect() as db:
+        if DATABASE_URL:
+            run(db, f"SELECT pg_advisory_xact_lock({BUDGET_LOCK_ID})")
+        else:
+            db.execute("BEGIN IMMEDIATE")
+        status = budget_status(db)
+        if not status["allowed"]:
+            raise BudgetBlocked(" ".join(status["blocked_reasons"]))
+        values = (service, status["month"], "reserved", json.dumps(status["estimate"]), now())
+        sql = "INSERT INTO search_runs (service, month, status, estimate_json, started_at) VALUES (?, ?, ?, ?, ?)"
+        if DATABASE_URL:
+            run_id = run(db, sql + " RETURNING id", values).fetchone()["id"]
+        else:
+            run_id = run(db, sql, values).lastrowid
+        return run_id, status["estimate"]
+
+
+def finish_search(run_id: int, meter: provider_search.Meter, error: str = "") -> None:
+    """Record every provider request the search attempted, including failed ones."""
+    with connect() as db:
+        month = run(db, "SELECT month FROM search_runs WHERE id=?", (run_id,)).fetchone()["month"]
+        for provider, operation in meter.calls:
+            run(db, "INSERT INTO provider_usage (run_id, month, provider, operation, created_at) VALUES (?, ?, ?, ?, ?)",
+                (run_id, month, provider, operation, now()))
+        run(db, "UPDATE search_runs SET status=?, actual_json=?, error=?, finished_at=? WHERE id=?",
+            ("failed" if error else "completed", json.dumps(meter.totals()), error[:500], now(), run_id))
 
 
 def get_icp(db, service: str) -> dict:
@@ -366,6 +469,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def read_optional_json(self) -> dict:
+        return self.read_json() if int(self.headers.get("Content-Length", "0") or 0) else {}
+
     def read_json(self) -> dict:
         size = int(self.headers.get("Content-Length", "0"))
         if size < 1 or size > 20000:
@@ -404,6 +510,9 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         parts = path.strip("/").split("/")
+        if parts == ["api", "budget"]:
+            with connect() as db:
+                return self.respond(200, budget_status(db))
         try:
             if parts[:2] != ["api", "services"]:
                 return self.respond(404, {"error": "Not found"})
@@ -488,7 +597,31 @@ class Handler(BaseHTTPRequestHandler):
                 provider_ready = bool(os.environ.get("APOLLO_API_KEY") or os.environ.get("BRAVE_SEARCH_API_KEY"))
                 if provider_ready and PUBLIC_NO_AUTH and os.environ.get("VOXEL1_ALLOW_PUBLIC_SEARCH") != "1":
                     return self.respond(403, {"error": "API search is disabled on this public app. Set VOXEL1_ALLOW_PUBLIC_SEARCH=1 after accepting that visitors can use the search credits, or enable app authentication."})
-                discovery = provider_search.discover(icp, service) if provider_ready else find_companies(icp)
+                if provider_ready:
+                    request = self.read_optional_json()
+                    with connect() as db:
+                        budget = budget_status(db)
+                    if not budget["allowed"]:
+                        return self.respond(409, {"error": " ".join(budget["blocked_reasons"]), "budget": budget})
+                    # The browser must echo the exact estimate it showed, so a
+                    # settings change between preview and click needs a new confirmation.
+                    if request.get("confirmed") is not True or request.get("estimate") != budget["estimate"]:
+                        return self.respond(409, {"error": "Review and confirm this search's estimated provider requests before searching.", "needs_confirmation": True, "budget": budget})
+                    try:
+                        run_id, allowance = reserve_search(service)
+                    except BudgetBlocked as exc:
+                        with connect() as db:
+                            return self.respond(409, {"error": str(exc), "budget": budget_status(db)})
+                    meter = provider_search.Meter(allowance)
+                    try:
+                        discovery = provider_search.discover(icp, service, meter)
+                    except Exception as exc:
+                        finish_search(run_id, meter, str(exc) or exc.__class__.__name__)
+                        raise
+                    finish_search(run_id, meter)
+                    discovery["usage"] = {"run_id": run_id, "estimate": allowance, "actual": meter.totals()}
+                else:
+                    discovery = find_companies(icp)
                 companies = discovery["companies"]
                 inserted = 0
                 with connect() as db:
@@ -510,7 +643,7 @@ class Handler(BaseHTTPRequestHandler):
                             updated_at=excluded.updated_at""",
                             (service, company["source_id"], company["company"], company["category"], company["city"], company["country"], company["email"], company["phone"], company["website"], company["source_url"], company.get("contact_name", ""), company.get("contact_title", ""), company.get("evidence_url", ""), int(bool(company.get("ai_screened"))), now(), now()))
                         inserted += int(existing is None and cur.rowcount > 0)
-                return self.respond(200, {"found": len(companies), "added": inserted, "source": discovery.get("source", "OpenStreetMap"), "coverage": discovery["coverage"], "warnings": discovery.get("warnings", [])})
+                return self.respond(200, {"found": len(companies), "added": inserted, "source": discovery.get("source", "OpenStreetMap"), "coverage": discovery["coverage"], "warnings": discovery.get("warnings", []), "usage": discovery.get("usage")})
             finally:
                 search_lock.release()
         except ValueError as exc:

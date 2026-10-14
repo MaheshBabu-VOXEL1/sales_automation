@@ -1,4 +1,4 @@
-const state = { service: null, icp: null, compatibleBackend: true, leads: [], filter: "all" };
+const state = { service: null, icp: null, compatibleBackend: true, leads: [], filter: "all", budget: null };
 const countries = [["US", "USA"], ["AE", "UAE"], ["SA", "Saudi Arabia"], ["IN", "India"], ["SG", "Singapore"]];
 const countryCode = (name) => countries.find((item) => item[1] === name)?.[0] || null;
 const leadCountry = (lead) => lead.country || (lead.source_id?.startsWith("apollo/") && state.icp?.countries?.length === 1 ? state.icp.countries[0] : "");
@@ -9,8 +9,38 @@ const safeUrl = (value) => { try { const u = new URL(value); return ["https:", "
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(data.error || `Request failed (${response.status})`);
+    error.budget = data.budget;
+    throw error;
+  }
   return data;
+}
+
+const providerNames = { apollo: "Apollo", brave: "Brave", gemini: "Gemini" };
+const requestCounts = (counts) => Object.entries(providerNames).filter(([key]) => counts[key]).map(([key, name]) => `${name} ${counts[key]}`).join(", ") || "none";
+
+function renderBudget(budget) {
+  state.budget = budget;
+  const panel = $("#budget");
+  if (!budget) { panel.classList.add("hidden"); return; }
+  const cards = Object.entries(providerNames).map(([key, name]) => {
+    const limit = budget.limits[key];
+    const need = budget.estimate[key];
+    if (!need && !budget.used[key] && !budget.held[key]) return `<div><strong>${name}</strong><small>Not used by this search</small></div>`;
+    const held = budget.held[key] ? `; ${budget.held[key]} held by unfinished searches` : "";
+    return `<div><strong>${name}: ${budget.used[key]} of ${limit || "no limit set"} requests</strong><small>This search: up to ${need}${held}</small></div>`;
+  });
+  cards.unshift(`<div><strong>Searches: ${budget.searches_used} of ${budget.limits.searches || "no limit set"}</strong><small>Counted even if a search fails</small></div>`);
+  panel.innerHTML = `<h3>Paid search budget for ${esc(budget.month)} (UTC)</h3><div class="budget-grid">${cards.join("")}</div>`
+    + (budget.allowed ? "" : `<p class="budget-blocked">Search blocked: ${budget.blocked_reasons.map(esc).join(" ")}</p>`)
+    + `<p class="budget-note">Counts are provider requests sent by this app, including failed ones, not billed credits or money. Check each provider's dashboard for actual charges. Limits are set by whoever manages the server environment.</p>`;
+  panel.classList.remove("hidden");
+}
+
+async function loadBudget() {
+  try { renderBudget(state.icp?.search_mode === "Apollo + Brave" ? await api("/api/budget") : null); }
+  catch (error) { renderBudget(null); message(`Could not load the search budget: ${error.message}`, true); }
 }
 
 function message(text, error = false) {
@@ -48,6 +78,7 @@ async function openService(service) {
     $("#icp-updated").textContent = "ICP saved";
     state.leads = leads;
     renderLeads();
+    await loadBudget();
     if (!state.compatibleBackend) message("An older Voxel1 server is running. Stop that server, start 'python server.py' again from D:\\sale automation, then refresh this page. Country settings cannot be saved or searched until it is restarted.", true);
   } catch (error) { message(error.message, true); }
 }
@@ -117,17 +148,32 @@ $("#icp-form").addEventListener("submit", async (event) => { event.preventDefaul
 $("#discover").addEventListener("click", async () => {
   const button = $("#discover");
   button.disabled = true;
-  button.textContent = "Searching…";
-  message("Searching companies and checking public website evidence. This can take a few minutes.");
   try {
     await saveIcp(false);
-    const result = await api(`/api/services/${state.service}/discover`, { method: "POST" });
+    let body = {};
+    if (state.icp.search_mode === "Apollo + Brave") {
+      await loadBudget();
+      const budget = state.budget;
+      if (!budget) return;
+      if (!budget.allowed) { message(`Search not started: ${budget.blocked_reasons.join(" ")}`, true); return; }
+      if (!confirm(`This search may send up to: ${requestCounts(budget.estimate)} requests.
+
+These are worst-case request counts; providers may charge credits for them. Continue?`)) { message("Search cancelled. No provider requests were sent."); return; }
+      body = { confirmed: true, estimate: budget.estimate };
+    }
+    button.textContent = "Searching…";
+    message("Searching companies and checking public website evidence. This can take a few minutes.");
+    const result = await api(`/api/services/${state.service}/discover`, { method: "POST", body: JSON.stringify(body) });
     await loadLeads();
+    await loadBudget();
     const searched = result.coverage.length;
     const failures = result.coverage.filter((item) => item.error).map((item) => item.country);
-    message(`${result.source}: checked ${searched} selected countr${searched === 1 ? "y" : "ies"}. Found ${result.found} candidate companies; ${result.added} added.${result.warnings?.length ? ` Some checks failed: ${result.warnings.join(" ")}` : ""}${failures.length ? ` Search errors: ${failures.join(", ")}.` : ""}`, Boolean(result.warnings?.length || failures.length));
-  } catch (error) { message(error.message, true); }
-  finally { button.disabled = false; button.textContent = "Search companies"; }
+    message(`${result.source}: checked ${searched} selected countr${searched === 1 ? "y" : "ies"}. Found ${result.found} candidate companies; ${result.added} added.${result.warnings?.length ? ` Some checks failed: ${result.warnings.join(" ")}` : ""}${failures.length ? ` Search errors: ${failures.join(", ")}.` : ""}${result.usage ? ` Provider requests sent: ${requestCounts(result.usage.actual)} (estimate was up to ${requestCounts(result.usage.estimate)}).` : ""}`, Boolean(result.warnings?.length || failures.length));
+  } catch (error) {
+    message(error.message, true);
+    if (error.budget) renderBudget(error.budget); else if (state.icp?.search_mode === "Apollo + Brave") await loadBudget();
+  }
+  finally { button.disabled = !state.compatibleBackend; button.textContent = "Search companies"; }
 });
 document.querySelectorAll(".tabs button").forEach((button) => button.addEventListener("click", () => {
   state.filter = button.dataset.filter;
