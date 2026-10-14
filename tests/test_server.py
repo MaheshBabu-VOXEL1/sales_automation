@@ -82,12 +82,19 @@ class AppTest(unittest.TestCase):
             lead_id = leads[0]["id"]
             self.request("PATCH", f"/api/services/training/leads/{lead_id}/status", {"status": "interested", "notes": "Replied"})
             company["contact_title"] = "Design Director"
+            company["email"] = "alex@example.com"
             _, repeat = self.request("POST", "/api/services/training/discover")
+            company["email"] = None
+            company["contact_name"] = ""
+            _, third = self.request("POST", "/api/services/training/discover")
         self.assertEqual(repeat["added"], 0)
+        self.assertEqual(third["added"], 0)
         _, updated = self.request("GET", "/api/services/training/leads")
         self.assertEqual(updated[0]["contact_title"], "Design Director")
         self.assertEqual(updated[0]["status"], "interested")
         self.assertEqual(updated[0]["notes"], "Replied")
+        self.assertEqual(updated[0]["email"], "alex@example.com")
+        self.assertEqual(updated[0]["contact_name"], "Alex")
 
     def test_service_separation_and_manual_interest(self):
         source = [{

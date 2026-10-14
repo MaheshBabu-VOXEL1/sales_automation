@@ -8,7 +8,8 @@ import urllib.request
 
 APOLLO = "https://api.apollo.io/api/v1"
 BRAVE = "https://api.search.brave.com/res/v1/web/search"
-LIMIT = 10  # At most ten companies, ten Brave lookups and one people lookup per click.
+LIMIT = 10  # At most ten company candidates per click.
+ENRICH_LIMIT = 3  # Paid enrichment never exceeds three companies and three people per click.
 DEFAULT_TITLES = {
     "training": ("BIM Manager", "Learning and Development Manager", "Training Manager", "Technical Director"),
     "bim": ("BIM Manager", "Head of Design", "Technical Director", "Managing Director"),
@@ -23,7 +24,8 @@ class ProviderError(RuntimeError):
 
 def request_json(url, key_header, key, params):
     query = urllib.parse.urlencode(params, doseq=True)
-    req = urllib.request.Request(url + "?" + query, headers={key_header: key, "Accept": "application/json"}, method="POST" if url.startswith(APOLLO) else "GET")
+    method = "POST" if url.startswith(APOLLO) and not url.endswith("/organizations/enrich") else "GET"
+    req = urllib.request.Request(url + "?" + query, headers={key_header: key, "Accept": "application/json"}, method=method)
     try:
         with urllib.request.urlopen(req, timeout=12) as response:
             return json.load(response)
@@ -65,6 +67,7 @@ def discover(icp, service):
         raise ProviderError("Apollo returned an unexpected company response.")
     found = []
     warnings = []
+    enrich = os.environ.get("APOLLO_ENRICH_DETAILS") == "1"
     for org in response["organizations"][:LIMIT]:
         if not isinstance(org, dict) or not org.get("id") or not org.get("name"):
             continue
@@ -93,7 +96,7 @@ def discover(icp, service):
                       "website": website, "source_url": website,
                       "contact_name": "", "contact_title": "",
                       "evidence_url": ""})
-    for lead in found:
+    for index, lead in enumerate(found):
         try:
             people = request_json(APOLLO + "/mixed_people/api_search", "x-api-key", apollo_key,
                                   {"organization_ids[]": [lead["source_id"].split("/", 1)[1]],
@@ -105,7 +108,34 @@ def discover(icp, service):
                 last = str(person.get("last_name") or person.get("last_name_obfuscated") or "").strip()
                 lead["contact_name"] = str(person.get("name") or " ".join(part for part in (first, last) if part))[:200]
                 lead["contact_title"] = str(person.get("title") or "")[:200]
+                if enrich and index < ENRICH_LIMIT and person.get("id"):
+                    try:
+                        detail = request_json(APOLLO + "/people/match", "x-api-key", apollo_key,
+                                              {"id": person["id"], "reveal_personal_emails": "false", "reveal_phone_number": "false"})
+                        enriched = detail.get("person") or {}
+                        if enriched.get("name"):
+                            lead["contact_name"] = str(enriched["name"])[:200]
+                        if enriched.get("email_status") == "verified" and enriched.get("email"):
+                            email = str(enriched["email"]).strip()
+                            if "@" in email and " " not in email:
+                                lead["email"] = email[:254]
+                    except ProviderError as exc:
+                        warnings.append(str(exc))
         except ProviderError as exc:
             warnings.append(str(exc))
+        if enrich and index < ENRICH_LIMIT:
+            try:
+                organization = request_json(APOLLO + "/organizations/enrich", "x-api-key", apollo_key,
+                                            {"domain": urllib.parse.urlparse(lead["website"]).hostname.removeprefix("www.")}).get("organization") or {}
+                if organization.get("city"):
+                    lead["city"] = str(organization["city"])[:100]
+                if organization.get("country"):
+                    lead["country"] = str(organization["country"])[:100]
+                if organization.get("industry"):
+                    lead["category"] = str(organization["industry"])[:100]
+                if organization.get("phone"):
+                    lead["phone"] = str(organization["phone"])[:100]
+            except ProviderError as exc:
+                warnings.append(str(exc))
     return {"companies": found, "coverage": [{"country": name, "city": None, "found": sum(c["country"].casefold() == name.casefold() for c in found)} for name in countries],
             "warnings": list(dict.fromkeys(warnings)), "source": "Apollo + Brave"}

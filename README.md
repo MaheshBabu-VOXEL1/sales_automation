@@ -24,6 +24,8 @@ Set `APOLLO_API_KEY` and `BRAVE_SEARCH_API_KEY` as **server environment variable
 
 The Apollo company-search endpoint consumes credits. Brave also meters requests. A public app with `VOXEL1_PUBLIC_NO_AUTH=1` blocks these paid-provider searches unless `VOXEL1_ALLOW_PUBLIC_SEARCH=1` is explicitly set. Enabling that option lets anyone with the app URL trigger searches and spend the account's credits. Use app authentication or a private deployment for normal use. The pilot has a ten-company limit per click but no monthly account-level credit budget.
 
+Optional location and contact enrichment is **off by default**. Set `APOLLO_ENRICH_DETAILS=1` on the server only after reviewing Apollo credits and privacy: each click then enriches at most the first three matching organizations (up to one credit each) and first three matched people (typically one credit each for email/demographics, with no phone reveal or waterfall). This can fill company city, industry, corporate phone and a verified work email when Apollo has them. The company search itself costs one credit per page. Repeat clicks may spend credits again. The app has no monthly credit cap; on a public, no-login deployment, anyone can initiate this and view saved contacts. Prefer authenticated access before storing real contact information. See Apollo's [API credit schedule](https://docs.apollo.io/docs/api-pricing).
+
 If neither provider key is configured, the previous OpenStreetMap city-sample mode remains available. If only one key is configured, the button explains which other key is missing. Provider failures are shown in the UI; results without a matching website page are omitted.
 
 ## Legacy map search

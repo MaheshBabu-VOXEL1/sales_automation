@@ -214,6 +214,7 @@ def get_icp(db, service: str) -> dict:
         profile.setdefault(key, "")
     result.update(profile)
     result["search_mode"] = "Apollo + Brave" if (os.environ.get("APOLLO_API_KEY") or os.environ.get("BRAVE_SEARCH_API_KEY")) else "OpenStreetMap city samples"
+    result["enrichment_enabled"] = os.environ.get("APOLLO_ENRICH_DETAILS") == "1"
     return result
 
 
@@ -417,9 +418,14 @@ class Handler(BaseHTTPRequestHandler):
                         cur = run(db, """INSERT INTO leads
                             (service, source_id, company, category, city, country, email, phone, website, source_url, contact_name, contact_title, evidence_url, discovered_at, updated_at)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(service, source_id) DO UPDATE SET
-                            company=excluded.company, category=excluded.category, city=excluded.city,
-                            country=excluded.country, website=excluded.website, source_url=excluded.source_url,
-                            contact_name=excluded.contact_name, contact_title=excluded.contact_title,
+                            company=excluded.company,
+                            category=CASE WHEN excluded.category <> 'business' THEN excluded.category ELSE leads.category END,
+                            city=CASE WHEN excluded.city <> '' THEN excluded.city ELSE leads.city END,
+                            country=CASE WHEN excluded.country <> '' THEN excluded.country ELSE leads.country END,
+                            email=COALESCE(excluded.email, leads.email), phone=COALESCE(excluded.phone, leads.phone),
+                            website=excluded.website, source_url=excluded.source_url,
+                            contact_name=CASE WHEN excluded.contact_name <> '' THEN excluded.contact_name ELSE leads.contact_name END,
+                            contact_title=CASE WHEN excluded.contact_title <> '' THEN excluded.contact_title ELSE leads.contact_title END,
                             evidence_url=excluded.evidence_url, updated_at=excluded.updated_at""",
                             (service, company["source_id"], company["company"], company["category"], company["city"], company["country"], company["email"], company["phone"], company["website"], company["source_url"], company.get("contact_name", ""), company.get("contact_title", ""), company.get("evidence_url", ""), now(), now()))
                         inserted += int(existing is None and cur.rowcount > 0)
