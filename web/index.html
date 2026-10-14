@@ -56,13 +56,13 @@
       <div class="stats"><div><strong id="stat-total">0</strong><span>Candidate companies saved</span></div><div><strong id="stat-contact">0</strong><span>With email or phone</span></div><div><strong id="stat-interested">0</strong><span>Interested</span></div><div><strong id="stat-not">0</strong><span>Not interested</span></div></div>
       <div id="country-summary" class="country-summary" aria-label="Results by country"></div>
       <div class="table-panel">
-        <div class="table-toolbar"><div class="tabs" role="group" aria-label="Filter companies"><button data-filter="all" class="active">All</button><button data-filter="new">Unreviewed</button><button data-filter="interested">Interested</button><button data-filter="not_interested">Not interested</button></div><input id="lead-search" type="search" placeholder="Find a company" aria-label="Find a company"></div>
-        <div class="table-scroll"><table><thead><tr><th>Company</th><th>Why a candidate</th><th>Location</th><th>Contact</th><th>Review / interest</th><th>Source</th></tr></thead><tbody id="lead-rows"></tbody></table></div>
+        <div class="table-toolbar"><div class="tabs" role="group" aria-label="Filter companies"><button data-filter="all" class="active">All</button><button data-filter="ai_screened">Gemini-screened</button><button data-filter="new">Unreviewed</button><button data-filter="interested">Interested</button><button data-filter="not_interested">Not interested</button></div><input id="lead-search" type="search" placeholder="Find a company" aria-label="Find a company"></div>
+        <div class="table-scroll"><table><thead><tr><th>Company</th><th>Screening status</th><th>Location</th><th>Contact</th><th>Review / interest</th><th>Source</th></tr></thead><tbody id="lead-rows"></tbody></table></div>
         <div id="empty" class="empty">No companies yet. Set your ICP and choose “Search selected countries.”</div>
       </div>
-      <p class="disclaimer" id="search-disclaimer">Company matches need human review. No messages are sent automatically.</p>
+      <p class="disclaimer" id="search-disclaimer">Older saved candidates have no recorded Gemini screening status. A Gemini-screened result is a plausible buyer, not a confirmed training or BIM services customer. No messages are sent automatically.</p>
     </section>
   </main>
-  <script src="/app.js?v=9" defer></script>
+  <script src="/app.js?v=10" defer></script>
 </body>
 </html>

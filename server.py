@@ -118,6 +118,7 @@ def init_db() -> None:
             city TEXT NOT NULL, country TEXT NOT NULL,
             email TEXT, phone TEXT, website TEXT, source_url TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'new', notes TEXT NOT NULL DEFAULT '',
+            ai_screened INTEGER NOT NULL DEFAULT 0,
             discovered_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             UNIQUE(service, source_id)
         )""")
@@ -126,6 +127,10 @@ def init_db() -> None:
                 run(db, f"ALTER TABLE leads ADD COLUMN IF NOT EXISTS {column} TEXT NOT NULL DEFAULT ''")
             elif column not in {row["name"] for row in run(db, "PRAGMA table_info(leads)")}:
                 run(db, f"ALTER TABLE leads ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+        if DATABASE_URL:
+            run(db, "ALTER TABLE leads ADD COLUMN IF NOT EXISTS ai_screened INTEGER NOT NULL DEFAULT 0")
+        elif "ai_screened" not in {row["name"] for row in run(db, "PRAGMA table_info(leads)")}:
+            run(db, "ALTER TABLE leads ADD COLUMN ai_screened INTEGER NOT NULL DEFAULT 0")
         if DATABASE_URL:
             run(db, "ALTER TABLE icps ADD COLUMN IF NOT EXISTS profile_json TEXT NOT NULL DEFAULT '{}'")
         else:
@@ -490,8 +495,8 @@ class Handler(BaseHTTPRequestHandler):
                     for company in companies:
                         existing = run(db, "SELECT id FROM leads WHERE service=? AND source_id=?", (service, company["source_id"])).fetchone()
                         cur = run(db, """INSERT INTO leads
-                            (service, source_id, company, category, city, country, email, phone, website, source_url, contact_name, contact_title, evidence_url, discovered_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(service, source_id) DO UPDATE SET
+                            (service, source_id, company, category, city, country, email, phone, website, source_url, contact_name, contact_title, evidence_url, ai_screened, discovered_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(service, source_id) DO UPDATE SET
                             company=excluded.company,
                             category=CASE WHEN excluded.category <> 'business' THEN excluded.category ELSE leads.category END,
                             city=CASE WHEN excluded.city <> '' THEN excluded.city ELSE leads.city END,
@@ -500,8 +505,10 @@ class Handler(BaseHTTPRequestHandler):
                             website=excluded.website, source_url=excluded.source_url,
                             contact_name=CASE WHEN excluded.contact_name <> '' THEN excluded.contact_name ELSE leads.contact_name END,
                             contact_title=CASE WHEN excluded.contact_title <> '' THEN excluded.contact_title ELSE leads.contact_title END,
-                            evidence_url=excluded.evidence_url, updated_at=excluded.updated_at""",
-                            (service, company["source_id"], company["company"], company["category"], company["city"], company["country"], company["email"], company["phone"], company["website"], company["source_url"], company.get("contact_name", ""), company.get("contact_title", ""), company.get("evidence_url", ""), now(), now()))
+                            evidence_url=excluded.evidence_url,
+                            ai_screened=CASE WHEN excluded.ai_screened=1 THEN 1 ELSE leads.ai_screened END,
+                            updated_at=excluded.updated_at""",
+                            (service, company["source_id"], company["company"], company["category"], company["city"], company["country"], company["email"], company["phone"], company["website"], company["source_url"], company.get("contact_name", ""), company.get("contact_title", ""), company.get("evidence_url", ""), int(bool(company.get("ai_screened"))), now(), now()))
                         inserted += int(existing is None and cur.rowcount > 0)
                 return self.respond(200, {"found": len(companies), "added": inserted, "source": discovery.get("source", "OpenStreetMap"), "coverage": discovery["coverage"], "warnings": discovery.get("warnings", [])})
             finally:

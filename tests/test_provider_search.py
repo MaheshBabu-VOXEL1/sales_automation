@@ -102,7 +102,21 @@ class ProviderSearchTest(unittest.TestCase):
         self.assertEqual(result["companies"][0]["contact_name"], "Alex Sm***h")
         self.assertEqual(result["companies"][0]["source_url"], "https://example.com")
         self.assertEqual(result["companies"][0]["evidence_url"], "")
+        self.assertFalse(result["companies"][0]["ai_screened"])
         self.assertIsNone(result["companies"][0]["email"])
+
+    def test_approved_candidate_records_gemini_screening(self):
+        def fake(url, _header, _key, _params):
+            if url.endswith("mixed_companies/search"):
+                return {"organizations": [{"id": "a", "name": "Architects", "website_url": "https://example.test"}]}
+            if url == provider_search.BRAVE:
+                return {"web": {"results": [{"url": "https://example.test/bim", "title": "BIM projects"}]}}
+            return {"people": []}
+        env = {"APOLLO_API_KEY": "secret", "BRAVE_SEARCH_API_KEY": "secret", "GEMINI_API_KEY": "secret"}
+        with patch.dict(os.environ, env), patch.object(provider_search, "request_json", side_effect=fake), patch.object(provider_search, "gemini_buyer_candidate", return_value=True) as screen:
+            result = provider_search.discover({"countries": ["India"]}, "training")
+        screen.assert_called_once()
+        self.assertTrue(result["companies"][0]["ai_screened"])
 
     def test_single_country_filter_labels_results_when_apollo_omits_country(self):
         def fake(url, _header, _key, _params):

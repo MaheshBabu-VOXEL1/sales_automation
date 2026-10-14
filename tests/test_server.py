@@ -121,12 +121,15 @@ class AppTest(unittest.TestCase):
             self.assertEqual((code, first["added"]), (200, 1))
             _, leads = self.request("GET", "/api/services/training/leads")
             lead_id = leads[0]["id"]
+            self.assertEqual(leads[0]["ai_screened"], 0)
             self.request("PATCH", f"/api/services/training/leads/{lead_id}/status", {"status": "interested", "notes": "Replied"})
             company["contact_title"] = "Design Director"
             company["email"] = "alex@example.com"
+            company["ai_screened"] = True
             _, repeat = self.request("POST", "/api/services/training/discover")
             company["email"] = None
             company["contact_name"] = ""
+            company["ai_screened"] = False
             _, third = self.request("POST", "/api/services/training/discover")
         self.assertEqual(repeat["added"], 0)
         self.assertEqual(third["added"], 0)
@@ -136,6 +139,7 @@ class AppTest(unittest.TestCase):
         self.assertEqual(updated[0]["notes"], "Replied")
         self.assertEqual(updated[0]["email"], "alex@example.com")
         self.assertEqual(updated[0]["contact_name"], "Alex")
+        self.assertEqual(updated[0]["ai_screened"], 1)
 
     def test_service_separation_and_manual_interest(self):
         source = [{
@@ -262,6 +266,26 @@ class AppTest(unittest.TestCase):
         self.assertEqual(migrated["categories"], ["education"])
         self.assertEqual(migrated["notes"], "Keep this note")
         self.assertEqual(len(migrated["countries"]), 5)
+
+    def test_legacy_leads_migrate_as_not_screened(self):
+        with server.connect() as db:
+            server.run(db, "DROP TABLE leads")
+            server.run(db, """CREATE TABLE leads (
+                id INTEGER PRIMARY KEY, service TEXT NOT NULL, source_id TEXT NOT NULL,
+                company TEXT NOT NULL, category TEXT NOT NULL, city TEXT NOT NULL,
+                country TEXT NOT NULL, email TEXT, phone TEXT, website TEXT,
+                source_url TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'new',
+                notes TEXT NOT NULL DEFAULT '', discovered_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL, UNIQUE(service, source_id)
+            )""")
+            server.run(db, """INSERT INTO leads
+                (service, source_id, company, category, city, country, source_url, discovered_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("training", "apollo/old", "Old candidate", "business", "", "India", "https://example.test", server.now(), server.now()))
+        server.init_db()
+        _, leads = self.request("GET", "/api/services/training/leads")
+        self.assertEqual(leads[0]["company"], "Old candidate")
+        self.assertEqual(leads[0]["ai_screened"], 0)
 
     def test_postgres_url_selects_postgres_and_initializes_schema(self):
         connection = MagicMock()

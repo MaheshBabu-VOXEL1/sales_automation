@@ -145,7 +145,7 @@ def discover(icp, service):
                       "country": str(org.get("country") or (countries[0] if len(countries) == 1 else ""))[:100], "email": None, "phone": None,
                       "website": website, "source_url": website,
                       "contact_name": "", "contact_title": "",
-                      "evidence_url": ""})
+                      "evidence_url": "", "ai_screened": bool(gemini_key)})
     for index, lead in enumerate(found):
         try:
             people = request_json(APOLLO + "/mixed_people/api_search", "x-api-key", apollo_key,
