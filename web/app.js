@@ -33,6 +33,10 @@ async function openService(service) {
     const [icp, leads] = await Promise.all([api(`/api/services/${service}/icp`), api(`/api/services/${service}/leads`)]);
     state.compatibleBackend = Array.isArray(icp.countries);
     state.icp = state.compatibleBackend ? icp : { ...icp, countries: countries.map((item) => item[1]) };
+    const providerMode = icp.search_mode === "Apollo + Brave";
+    $("#source-badge").textContent = `Source: ${icp.search_mode || "OpenStreetMap city samples"}`;
+    $("#country-search-hint").textContent = providerMode ? "Apollo searches the selected countries. This pilot checks up to 10 companies per click." : "Without Apollo and Brave keys, search uses city samples in the five listed countries.";
+    $("#search-disclaimer").textContent = providerMode ? "Apollo finds companies and people; Brave links matching BIM/Revit website pages. These are candidate matches, not verified purchase intent. Email and phone are not enriched. No messages are sent." : "The public-map source covers one city sample in each listed country, not the whole country. Other countries need Apollo and Brave keys. Data © OpenStreetMap contributors. No messages are sent.";
     const form = $("#icp-form");
     for (const field of ["name", "notes", "employee_min", "employee_max", "titles", "keywords", "exclusions", "goal"]) form.elements[field].value = icp[field] ?? "";
     form.querySelectorAll('[name="categories"]').forEach((box) => { box.checked = (icp.categories || []).includes(box.value); });
@@ -87,18 +91,18 @@ function renderLeads() {
   $("#stat-contact").textContent = leads.filter((lead) => lead.email || lead.phone).length;
   $("#stat-interested").textContent = leads.filter((lead) => lead.status === "interested").length;
   $("#stat-not").textContent = leads.filter((lead) => lead.status === "not_interested").length;
-  $("#country-summary").innerHTML = (state.icp?.countries || []).map((name) => `<span><strong>${esc(name)}</strong><small>${leads.filter((lead) => lead.country === countryCode(name)).length} companies</small></span>`).join("");
+  $("#country-summary").innerHTML = (state.icp?.countries || []).map((name) => `<span><strong>${esc(name)}</strong><small>${leads.filter((lead) => lead.country?.toLowerCase() === name.toLowerCase() || lead.country === countryCode(name)).length} companies</small></span>`).join("");
   const text = $("#lead-search").value.trim().toLowerCase();
   const visible = leads.filter((lead) => (state.filter === "all" || lead.status === state.filter) && lead.company.toLowerCase().includes(text));
   $("#empty").classList.toggle("hidden", visible.length > 0);
-  $("#empty").textContent = leads.length ? "No companies match this filter." : "No companies yet. Set your ICP and choose “Search selected countries.”";
+  $("#empty").textContent = leads.length ? "No companies match this filter." : "No companies yet. Set your ICP and choose “Search companies.”";
   $("#lead-rows").innerHTML = visible.map((lead) => {
     const web = safeUrl(lead.website);
     const source = safeUrl(lead.source_url);
     const email = lead.email ? `<span class="contact-line"><a href="mailto:${encodeURIComponent(lead.email)}">${esc(lead.email)}</a></span>` : "";
     const phone = lead.phone ? `<span class="contact-line"><a href="tel:${encodeURIComponent(lead.phone)}">${esc(lead.phone)}</a></span>` : "";
-    const contact = email || phone ? email + phone : "<small>No public contact listed</small>";
-    return `<tr><td data-label="Company"><strong>${esc(lead.company)}</strong><small>${esc(lead.category)}</small>${web ? `<div><a class="source-link" href="${esc(web)}" target="_blank" rel="noopener noreferrer">Website ↗</a></div>` : ""}</td><td data-label="Location">${esc(lead.city)}<br><small>${esc(lead.country)}</small></td><td data-label="Public contact">${contact}</td><td data-label="Interest status"><select class="status-select ${esc(lead.status)}" data-id="${lead.id}" aria-label="Interest status for ${esc(lead.company)}"><option value="new" ${lead.status === "new" ? "selected" : ""}>Unreviewed</option><option value="interested" ${lead.status === "interested" ? "selected" : ""}>Interested</option><option value="not_interested" ${lead.status === "not_interested" ? "selected" : ""}>Not interested</option></select>${lead.notes ? `<small class="contact-line">${esc(lead.notes)}</small>` : ""}</td><td data-label="Source">${source ? `<a class="source-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">OSM record ↗</a>` : "—"}</td></tr>`;
+    const contact = `${lead.contact_name ? `<strong>${esc(lead.contact_name)}</strong><small>${esc(lead.contact_title)}</small>` : ""}${email}${phone}` || "<small>No contact found</small>";
+    return `<tr><td data-label="Company"><strong>${esc(lead.company)}</strong><small>${esc(lead.category)}</small>${web ? `<div><a class="source-link" href="${esc(web)}" target="_blank" rel="noopener noreferrer">Website ↗</a></div>` : ""}</td><td data-label="Location">${esc(lead.city)}<br><small>${esc(lead.country)}</small></td><td data-label="Public contact">${contact}</td><td data-label="Interest status"><select class="status-select ${esc(lead.status)}" data-id="${lead.id}" aria-label="Interest status for ${esc(lead.company)}"><option value="new" ${lead.status === "new" ? "selected" : ""}>Unreviewed</option><option value="interested" ${lead.status === "interested" ? "selected" : ""}>Interested</option><option value="not_interested" ${lead.status === "not_interested" ? "selected" : ""}>Not interested</option></select>${lead.notes ? `<small class="contact-line">${esc(lead.notes)}</small>` : ""}</td><td data-label="Source">${source ? `<a class="source-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">Evidence ↗</a>` : "—"}</td></tr>`;
   }).join("");
 }
 
@@ -109,16 +113,16 @@ $("#discover").addEventListener("click", async () => {
   const button = $("#discover");
   button.disabled = true;
   button.textContent = "Searching…";
-  message("Searching selected countries where the free city-sample source is available. This can take a few minutes.");
+  message("Searching companies and checking public website evidence. This can take a few minutes.");
   try {
     await saveIcp(false);
     const result = await api(`/api/services/${state.service}/discover`, { method: "POST" });
     await loadLeads();
-    const searched = result.coverage.filter((item) => item.city).length;
+    const searched = result.coverage.length;
     const failures = result.coverage.filter((item) => item.error).map((item) => item.country);
-    message(`Checked ${searched} selected country sample${searched === 1 ? "" : "s"}. Found ${result.found} records; ${result.added} new companies added.${failures.length ? ` No results from ${failures.join(", ")} due to missing provider or search error.` : ""} Missing contacts remain blank.`, failures.length > 0);
+    message(`${result.source}: checked ${searched} selected countr${searched === 1 ? "y" : "ies"}. Found ${result.found} relevant companies; ${result.added} added.${result.warnings?.length ? ` Some checks failed: ${result.warnings.join(" ")}` : ""}${failures.length ? ` Search errors: ${failures.join(", ")}.` : ""}`, Boolean(result.warnings?.length || failures.length));
   } catch (error) { message(error.message, true); }
-  finally { button.disabled = false; button.textContent = "Search selected countries"; }
+  finally { button.disabled = false; button.textContent = "Search companies"; }
 });
 document.querySelectorAll(".tabs button").forEach((button) => button.addEventListener("click", () => {
   state.filter = button.dataset.filter;

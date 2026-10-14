@@ -65,6 +65,30 @@ class AppTest(unittest.TestCase):
             self.assertEqual(code, 200)
             self.assertEqual(icp["service"], "training")
 
+    def test_public_provider_search_requires_explicit_credit_opt_in(self):
+        with patch.object(server, "PUBLIC_NO_AUTH", True), patch.dict(server.os.environ, {"APOLLO_API_KEY": "test", "BRAVE_SEARCH_API_KEY": "test"}, clear=True), patch.object(server.provider_search, "discover") as provider:
+            code, body = self.request("POST", "/api/services/training/discover")
+        self.assertEqual(code, 403)
+        self.assertIn("VOXEL1_ALLOW_PUBLIC_SEARCH", body["error"])
+        provider.assert_not_called()
+
+    def test_provider_search_saves_evidence_and_preserves_interest_on_repeat(self):
+        company = {"source_id": "apollo/a", "company": "Example", "category": "architecture", "city": "Mumbai", "country": "India", "email": None, "phone": None, "website": "https://example.com", "source_url": "https://example.com/bim", "contact_name": "Alex", "contact_title": "BIM Manager", "evidence_url": "https://example.com/bim"}
+        result = {"companies": [company], "coverage": [{"country": "India", "city": None, "found": 1}], "source": "Apollo + Brave"}
+        with patch.dict(server.os.environ, {"APOLLO_API_KEY": "test", "BRAVE_SEARCH_API_KEY": "test"}), patch.object(server.provider_search, "discover", return_value=result):
+            code, first = self.request("POST", "/api/services/training/discover")
+            self.assertEqual((code, first["added"]), (200, 1))
+            _, leads = self.request("GET", "/api/services/training/leads")
+            lead_id = leads[0]["id"]
+            self.request("PATCH", f"/api/services/training/leads/{lead_id}/status", {"status": "interested", "notes": "Replied"})
+            company["contact_title"] = "Design Director"
+            _, repeat = self.request("POST", "/api/services/training/discover")
+        self.assertEqual(repeat["added"], 0)
+        _, updated = self.request("GET", "/api/services/training/leads")
+        self.assertEqual(updated[0]["contact_title"], "Design Director")
+        self.assertEqual(updated[0]["status"], "interested")
+        self.assertEqual(updated[0]["notes"], "Replied")
+
     def test_service_separation_and_manual_interest(self):
         source = [{
             "source_id": "node/123", "company": "Example Architects", "category": "architect",

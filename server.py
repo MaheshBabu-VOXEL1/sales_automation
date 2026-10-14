@@ -21,6 +21,7 @@ import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import provider_search
 
 
 ROOT = Path(__file__).resolve().parent
@@ -114,6 +115,11 @@ def init_db() -> None:
             discovered_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             UNIQUE(service, source_id)
         )""")
+        for column in ("contact_name", "contact_title", "evidence_url"):
+            if DATABASE_URL:
+                run(db, f"ALTER TABLE leads ADD COLUMN IF NOT EXISTS {column} TEXT NOT NULL DEFAULT ''")
+            elif column not in {row["name"] for row in run(db, "PRAGMA table_info(leads)")}:
+                run(db, f"ALTER TABLE leads ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         if DATABASE_URL:
             run(db, "ALTER TABLE icps ADD COLUMN IF NOT EXISTS profile_json TEXT NOT NULL DEFAULT '{}'")
         else:
@@ -207,6 +213,7 @@ def get_icp(db, service: str) -> dict:
     for key in ("employee_min", "employee_max", "titles", "keywords", "exclusions", "goal"):
         profile.setdefault(key, "")
     result.update(profile)
+    result["search_mode"] = "Apollo + Brave" if (os.environ.get("APOLLO_API_KEY") or os.environ.get("BRAVE_SEARCH_API_KEY")) else "OpenStreetMap city samples"
     return result
 
 
@@ -398,17 +405,25 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 with connect() as db:
                     icp = get_icp(db, service)
-                discovery = find_companies(icp)
+                provider_ready = bool(os.environ.get("APOLLO_API_KEY") or os.environ.get("BRAVE_SEARCH_API_KEY"))
+                if provider_ready and PUBLIC_NO_AUTH and os.environ.get("VOXEL1_ALLOW_PUBLIC_SEARCH") != "1":
+                    return self.respond(403, {"error": "API search is disabled on this public app. Set VOXEL1_ALLOW_PUBLIC_SEARCH=1 after accepting that visitors can use the search credits, or enable app authentication."})
+                discovery = provider_search.discover(icp, service) if provider_ready else find_companies(icp)
                 companies = discovery["companies"]
                 inserted = 0
                 with connect() as db:
                     for company in companies:
+                        existing = run(db, "SELECT id FROM leads WHERE service=? AND source_id=?", (service, company["source_id"])).fetchone()
                         cur = run(db, """INSERT INTO leads
-                            (service, source_id, company, category, city, country, email, phone, website, source_url, discovered_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(service, source_id) DO NOTHING""",
-                            (service, company["source_id"], company["company"], company["category"], company["city"], company["country"], company["email"], company["phone"], company["website"], company["source_url"], now(), now()))
-                        inserted += cur.rowcount
-                return self.respond(200, {"found": len(companies), "added": inserted, "source": "OpenStreetMap", "coverage": discovery["coverage"]})
+                            (service, source_id, company, category, city, country, email, phone, website, source_url, contact_name, contact_title, evidence_url, discovered_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(service, source_id) DO UPDATE SET
+                            company=excluded.company, category=excluded.category, city=excluded.city,
+                            country=excluded.country, website=excluded.website, source_url=excluded.source_url,
+                            contact_name=excluded.contact_name, contact_title=excluded.contact_title,
+                            evidence_url=excluded.evidence_url, updated_at=excluded.updated_at""",
+                            (service, company["source_id"], company["company"], company["category"], company["city"], company["country"], company["email"], company["phone"], company["website"], company["source_url"], company.get("contact_name", ""), company.get("contact_title", ""), company.get("evidence_url", ""), now(), now()))
+                        inserted += int(existing is None and cur.rowcount > 0)
+                return self.respond(200, {"found": len(companies), "added": inserted, "source": discovery.get("source", "OpenStreetMap"), "coverage": discovery["coverage"], "warnings": discovery.get("warnings", [])})
             finally:
                 search_lock.release()
         except ValueError as exc:

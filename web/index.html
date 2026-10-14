@@ -34,12 +34,12 @@
 
     <section id="workspace" class="workspace hidden">
       <button id="back" class="back-button">← All services</button>
-      <div class="page-heading"><div><div class="eyebrow" id="service-eyebrow">SERVICE WORKSPACE</div><h1 id="service-title"></h1><p>Set your ideal customer profile, find companies and track interest.</p></div><span class="source-badge">Source: OpenStreetMap city samples</span></div>
+      <div class="page-heading"><div><div class="eyebrow" id="service-eyebrow">SERVICE WORKSPACE</div><h1 id="service-title"></h1><p>Set your ideal customer profile, find companies and track interest.</p></div><span class="source-badge" id="source-badge">Company search</span></div>
 
       <div class="section-head"><div><span class="step">01</span><h2>Ideal customer profile</h2></div><span class="hint">Saved separately for each product</span></div>
       <form id="icp-form" class="panel icp-form">
         <label class="field field-wide">ICP name<input name="name" maxlength="100" required></label>
-        <fieldset class="target-countries"><legend>Countries of focus for this product</legend><div class="checks"><label><input type="checkbox" name="countries" value="USA"> USA</label><label><input type="checkbox" name="countries" value="UAE"> UAE</label><label><input type="checkbox" name="countries" value="Saudi Arabia"> Saudi Arabia</label><label><input type="checkbox" name="countries" value="India"> India</label><label><input type="checkbox" name="countries" value="Singapore"> Singapore</label></div><label class="field custom-countries">Other countries <span class="optional">(comma-separated)</span><input name="other_countries" placeholder="e.g. Germany, Australia"></label><small>Any country can be saved in the ICP. The current free search can discover only city samples in the five listed countries.</small></fieldset>
+        <fieldset class="target-countries"><legend>Countries of focus for this product</legend><div class="checks"><label><input type="checkbox" name="countries" value="USA"> USA</label><label><input type="checkbox" name="countries" value="UAE"> UAE</label><label><input type="checkbox" name="countries" value="Saudi Arabia"> Saudi Arabia</label><label><input type="checkbox" name="countries" value="India"> India</label><label><input type="checkbox" name="countries" value="Singapore"> Singapore</label></div><label class="field custom-countries">Other countries <span class="optional">(comma-separated)</span><input name="other_countries" placeholder="e.g. Germany, Australia"></label><small id="country-search-hint">Choose the countries to search.</small></fieldset>
         <fieldset class="industry-field"><legend>Target industries</legend><div class="checks"><label><input type="checkbox" name="categories" value="architecture"> Architecture</label><label><input type="checkbox" name="categories" value="construction"> Construction</label><label><input type="checkbox" name="categories" value="engineering"> Engineering</label><label><input type="checkbox" name="categories" value="real_estate"> Real estate</label><label><input type="checkbox" name="categories" value="education"> Education</label></div></fieldset>
         <label class="field">Company size: minimum employees<input name="employee_min" type="number" min="1" max="1000000" placeholder="Any size"></label>
         <label class="field">Company size: maximum employees<input name="employee_max" type="number" min="1" max="1000000" placeholder="Any size"></label>
@@ -48,7 +48,7 @@
         <label class="field">Exclude keywords / industries<input name="exclusions" maxlength="500" placeholder="e.g. residential-only"></label>
         <label class="field field-full">Campaign goal<input name="goal" maxlength="500" placeholder="e.g. Book a discovery meeting"></label>
         <label class="field field-full">Notes <span class="optional">(for your team; not used as a search filter yet)</span><textarea name="notes" maxlength="500" rows="2" placeholder="What makes a good customer for this service?"></textarea></label>
-        <div class="form-actions"><span id="icp-updated" class="muted">Country and industry selections guide this free search; other ICP fields are saved for later qualification.</span><div><button type="submit" class="button secondary">Save ICP</button><button type="button" id="discover" class="button primary">Search selected countries</button></div></div>
+        <div class="form-actions"><span id="icp-updated" class="muted">ICP saved</span><div><button type="submit" class="button secondary">Save ICP</button><button type="button" id="discover" class="button primary">Search companies</button></div></div>
       </form>
       <p id="message" class="message hidden" role="status"></p>
 
@@ -60,9 +60,9 @@
         <div class="table-scroll"><table><thead><tr><th>Company</th><th>Location</th><th>Public contact</th><th>Interest status</th><th>Source</th></tr></thead><tbody id="lead-rows"></tbody></table></div>
         <div id="empty" class="empty">No companies yet. Set your ICP and choose “Search selected countries.”</div>
       </div>
-      <p class="disclaimer">The current free search supports one city sample each in USA (New York), UAE (Dubai), Saudi Arabia (Riyadh), India (Mumbai) and Singapore. Other focus countries remain saved in your ICP but need a discovery provider before they can be searched. This does not cover every business in a country. OpenStreetMap lists businesses, not verified decision-makers. Missing email or phone means unavailable from this source. A found contact does not indicate permission to send messages. Data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>.</p>
+      <p class="disclaimer" id="search-disclaimer">Company matches need human review. No messages are sent automatically.</p>
     </section>
   </main>
-  <script src="/app.js?v=4" defer></script>
+  <script src="/app.js?v=5" defer></script>
 </body>
 </html>
