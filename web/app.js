@@ -361,6 +361,7 @@ function historyText(h, serviceId) {
     case "lead_room_updated": return `Room saved: stage ${esc(STAGE_NAMES[d.stage] || d.stage)}${d.owner ? `, owner ${esc(d.owner)}` : ""}.`;
     case "created": return `${d.kind === "task" ? "Task" : "Draft"} added: ${esc(d.title)}.`;
     case "edited": return `Edited: ${esc(d.title)}.`;
+    case "ai_drafted": return `AI wrote a ${esc((d.purpose || "").toLowerCase())} draft (${esc(d.model)}): ${esc(d.title)}. Waiting for review.`;
     case "approve": return `Approved draft: ${esc(d.title)} (not sent).`;
     case "reject": return `${d.kind === "task" ? "Skipped" : "Rejected"}: ${esc(d.title)}.`;
     case "complete": return d.kind === "task" ? `Done: ${esc(d.title)}.` : `Recorded as posted/sent: ${esc(d.title)}.`;
@@ -385,7 +386,7 @@ function room(s, l) {
     ${d.stage === "lost" ? '<p class="panel-b note">Marked as lost. Choose a stage above to reopen it.</p>' : ""}
   </section>
   <div class="grid2">
-    <section class="panel"><div class="panel-h"><h2>Next steps</h2><div class="actions"><button class="btn" type="button" data-act="lead-task">Add task</button><button class="btn pri" type="button" data-act="lead-draft">Draft message</button></div></div>
+    <section class="panel"><div class="panel-h"><h2>Next steps</h2><div class="actions"><button class="btn" type="button" data-act="lead-task">Add task</button><button class="btn" type="button" data-act="lead-draft">Draft message</button>${active ? '<button class="btn pri" type="button" data-act="ai-draft">Write draft with AI</button>' : ""}</div></div>
       ${steps.length ? steps.map((i) => `<div class="ns"><span class="ck ${i.state === "done" || i.state === "approved" ? "done" : i.kind !== "task" && i.state === "pending" ? "you" : ""}">${i.state === "done" || i.state === "approved" ? CHECK : ""}</span>
         <div><b>${esc(i.title)}</b><span class="when">${esc(fmtWhen(i))} · ${i.kind === "task" ? esc(i.label || "Task") : esc(i.channel) + " draft"}</span> ${itemStatus(i)}${draftText(i)}${itemButtons(i)}</div>${who(i.owner)}</div>`).join("")
         : '<p class="panel-b note">No next steps yet. Add a task or draft a message for this lead.</p>'}
@@ -712,6 +713,18 @@ async function act(el) {
     case "new-content": itemEditor("content", s.id); return;
     case "lead-task": itemEditor("task", s.id, null, S.lead); return;
     case "lead-draft": itemEditor("outreach", s.id, null, S.lead); return;
+    case "ai-draft": {
+      const leadId = S.lead, sent = S.growth.items.some((i) => i.lead_id === leadId && i.kind === "outreach" && ["approved", "done"].includes(i.state));
+      openEditor({
+        title: "Write draft with AI",
+        help: "Gemini writes a first email using only what this app knows about the lead. It counts as one Gemini request against the monthly limit. The draft waits for your edits and approval; nothing is sent.",
+        fields: [{ name: "purpose", label: "Purpose", type: "select", options: [["First contact", "First contact"], ...(sent ? [["Follow-up", "Follow-up"]] : [])], value: sent ? "Follow-up" : "First contact", full: true },
+          { name: "guidance", label: "Guidance for the AI", type: "textarea", rows: 3, max: 500, optional: true, value: "" }],
+        submitLabel: "Write draft",
+        submit: (v) => api(`/api/services/${s.id}/leads/${leadId}/ai-draft`, { method: "POST", body: JSON.stringify(v) }).then((item) => { S.open[item.id] = true; return item; }),
+      });
+      return;
+    }
     case "routine": {
       const rows = ROUTINES[s.id];
       const existing = new Set(items(s.id, "task").filter((i) => i.due === today()).map((i) => i.title));

@@ -25,6 +25,7 @@ from pathlib import Path
 from http.cookies import SimpleCookie
 import provider_search
 import growth
+import ai_draft
 
 
 ROOT = Path(__file__).resolve().parent
@@ -294,6 +295,7 @@ def budget_status(db) -> dict:
         else:
             for provider, count in json.loads(row["estimate_json"]).items():
                 held[provider] = held.get(provider, 0) + int(count)
+    used["gemini"] += ai_draft_count(db, month)
     estimate = provider_search.estimate_requests()
     reasons = []
     if len(runs) + 1 > limits["searches"]:
@@ -329,6 +331,60 @@ def reserve_search(service: str) -> tuple[int, dict]:
         else:
             run_id = run(db, sql, values).lastrowid
         return run_id, status["estimate"]
+
+
+def ai_draft_count(db, month: str) -> int:
+    # AI drafts are not search runs; each attempt is a provider_usage row with run_id 0.
+    return run(db, "SELECT COUNT(*) AS n FROM provider_usage WHERE run_id=0 AND month=? AND provider='gemini' AND operation='outreach_draft'",
+               (month,)).fetchone()["n"]
+
+
+def reserve_ai_draft() -> None:
+    """Count one Gemini request against the monthly cap before it is sent; raises BudgetBlocked otherwise."""
+    with connect() as db:
+        if DATABASE_URL:
+            run(db, f"SELECT pg_advisory_xact_lock({BUDGET_LOCK_ID})")
+        else:
+            db.execute("BEGIN IMMEDIATE")
+        status = budget_status(db)
+        limit = status["limits"]["gemini"]
+        if not limit:
+            raise BudgetBlocked(f"Gemini: no monthly request limit is set. Set {BUDGET_ENV['gemini']} on the server.")
+        if status["used"]["gemini"] + status["held"]["gemini"] + 1 > limit:
+            raise BudgetBlocked(f"Gemini: the monthly limit of {limit} requests is used up. Raise {BUDGET_ENV['gemini']} on the server to allow more.")
+        run(db, "INSERT INTO provider_usage (run_id, month, provider, operation, created_at) VALUES (0, ?, 'gemini', 'outreach_draft', ?)",
+            (status["month"], now()))
+
+
+def ai_draft_lead(service: str, lead_id: int, payload: dict) -> dict:
+    purpose = payload.get("purpose")
+    if purpose not in ai_draft.PURPOSES:
+        raise ValueError("Choose First contact or Follow-up.")
+    guidance = payload.get("guidance") or ""
+    if not isinstance(guidance, str) or len(guidance) > 500:
+        raise ValueError("Keep the guidance under 500 characters.")
+    if not os.environ.get("GEMINI_API_KEY"):
+        raise ValueError("Set GEMINI_API_KEY on the server to write drafts with AI.")
+    with connect() as db:
+        lead = run(db, "SELECT * FROM leads WHERE id=? AND service=?", (lead_id, service)).fetchone()
+        if not lead:
+            raise LookupError("Lead not found in this service.")
+        if lead["review_decision"] != "active":
+            raise ValueError("Restore this company before drafting a message to it.")
+        if growth.is_paused(db, run, service):
+            raise ValueError("This workspace is paused. Resume it before drafting.")
+        room = run(db, "SELECT room_notes FROM growth_leads WHERE lead_id=?", (lead_id,)).fetchone()
+        earlier = [{"subject": r["title"], "status": r["state"], "text": r["body"][:600]}
+                   for r in run(db, "SELECT title, body, state FROM growth_items WHERE lead_id=? AND kind='outreach' AND state IN ('approved', 'done') ORDER BY id DESC LIMIT 3", (lead_id,))]
+    if purpose == "Follow-up" and not earlier:
+        raise ValueError("There is no approved or sent message to follow up on yet. Draft a first contact instead.")
+    reserve_ai_draft()
+    draft = ai_draft.write_draft(dict(lead), service, purpose, room["room_notes"] if room else "", earlier, guidance.strip())
+    with connect() as db:
+        item = growth.save_item(db, run, None, {"service": service, "kind": "outreach", "lead_id": lead_id, "title": draft["title"],
+                                                "body": draft["body"], "channel": "Email", "label": purpose, "due": datetime.now(timezone.utc).strftime("%Y-%m-%d")})
+        growth.event(db, run, service, item["id"], lead_id, "ai_drafted", {"title": item["title"], "kind": "outreach", "model": draft["model"], "purpose": purpose})
+    return item
 
 
 def finish_search(run_id: int, meter: provider_search.Meter, error: str = "") -> None:
@@ -640,9 +696,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self.authorized() or not self.same_origin_write():
             return
+        parts = urllib.parse.urlparse(self.path).path.strip("/").split("/")
+        if parts[:2] == ["api", "services"] and len(parts) == 6 and parts[3] == "leads" and parts[4].isdigit() and parts[5] == "ai-draft":
+            try:
+                service = self.service_from_path(parts)
+                return self.respond(200, ai_draft_lead(service, int(parts[4]), self.read_json()))
+            except LookupError as exc:
+                return self.respond(404, {"error": str(exc)})
+            except BudgetBlocked as exc:
+                return self.respond(409, {"error": str(exc)})
+            except provider_search.ProviderError as exc:
+                return self.respond(502, {"error": str(exc)})
+            except (ValueError, json.JSONDecodeError) as exc:
+                return self.respond(400, {"error": str(exc)})
         if self.growth_write("POST"):
             return
-        parts = urllib.parse.urlparse(self.path).path.strip("/").split("/")
         try:
             service = self.service_from_path(parts)
             if parts[:2] != ["api", "services"] or parts[3:] != ["discover"]:
