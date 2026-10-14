@@ -37,7 +37,7 @@ async function openService(service) {
     const providerMode = icp.search_mode === "Apollo + Brave";
     $("#source-badge").textContent = `Source: ${icp.search_mode || "OpenStreetMap city samples"}`;
     $("#country-search-hint").textContent = providerMode ? "Apollo searches the selected countries. This pilot checks up to 10 companies per click." : "Without Apollo and Brave keys, search uses city samples in the five listed countries.";
-    $("#search-disclaimer").textContent = providerMode ? `Apollo finds companies and people; Brave checks for matching BIM/Revit website pages without storing its search results. ${icp.enrichment_enabled ? "Apollo may use credits to enrich city, company phone and one verified work email for up to three matches per click." : "City, email and phone enrichment is off."} These are candidate matches, not verified purchase intent. No messages are sent.` : "The public-map source covers one city sample in each listed country, not the whole country. Other countries need Apollo and Brave keys. Data © OpenStreetMap contributors. No messages are sent.";
+    $("#search-disclaimer").textContent = providerMode ? `Apollo finds companies and people; Brave checks for matching BIM/Revit website pages without storing its search results. ${icp.ai_qualification_enabled ? "Gemini also screens new matches for plausible buyers; uncertain matches are skipped. AI can still be wrong." : "AI buyer screening is off."} ${icp.enrichment_enabled ? "Apollo may use credits to enrich city, company phone and one verified work email for up to three matches per click." : "City, email and phone enrichment is off."} These are candidate matches, not verified purchase intent. No messages are sent.` : "The public-map source covers one city sample in each listed country, not the whole country. Other countries need Apollo and Brave keys. Data © OpenStreetMap contributors. No messages are sent.";
     const form = $("#icp-form");
     for (const field of ["name", "notes", "employee_min", "employee_max", "titles", "keywords", "exclusions", "goal"]) form.elements[field].value = icp[field] ?? "";
     form.querySelectorAll('[name="categories"]').forEach((box) => { box.checked = (icp.categories || []).includes(box.value); });
@@ -121,7 +121,7 @@ $("#discover").addEventListener("click", async () => {
     await loadLeads();
     const searched = result.coverage.length;
     const failures = result.coverage.filter((item) => item.error).map((item) => item.country);
-    message(`${result.source}: checked ${searched} selected countr${searched === 1 ? "y" : "ies"}. Found ${result.found} relevant companies; ${result.added} added.${result.warnings?.length ? ` Some checks failed: ${result.warnings.join(" ")}` : ""}${failures.length ? ` Search errors: ${failures.join(", ")}.` : ""}`, Boolean(result.warnings?.length || failures.length));
+    message(`${result.source}: checked ${searched} selected countr${searched === 1 ? "y" : "ies"}. Found ${result.found} candidate companies; ${result.added} added.${result.warnings?.length ? ` Some checks failed: ${result.warnings.join(" ")}` : ""}${failures.length ? ` Search errors: ${failures.join(", ")}.` : ""}`, Boolean(result.warnings?.length || failures.length));
   } catch (error) { message(error.message, true); }
   finally { button.disabled = false; button.textContent = "Search companies"; }
 });

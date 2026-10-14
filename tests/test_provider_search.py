@@ -8,6 +8,43 @@ import provider_search
 
 
 class ProviderSearchTest(unittest.TestCase):
+    def test_gemini_screen_skips_rejected_leads_before_contact_enrichment(self):
+        seen = []
+        def fake(url, _header, _key, _params):
+            seen.append(url)
+            if url.endswith("mixed_companies/search"):
+                return {"organizations": [{"id": "a", "name": "Revit BIM Services", "website_url": "https://vendor.test"}]}
+            if url == provider_search.BRAVE:
+                return {"web": {"results": [{"url": "https://vendor.test/bim", "title": "BIM services"}]}}
+            self.fail("Rejected lead must not trigger Apollo contact or enrichment calls")
+        env = {"APOLLO_API_KEY": "secret", "BRAVE_SEARCH_API_KEY": "secret", "GEMINI_API_KEY": "secret", "APOLLO_ENRICH_DETAILS": "1"}
+        with patch.dict(os.environ, env), patch.object(provider_search, "request_json", side_effect=fake), patch.object(provider_search, "gemini_buyer_candidate", return_value=False) as screen:
+            result = provider_search.discover({"countries": ["India"]}, "training")
+        self.assertEqual(result["companies"], [])
+        self.assertEqual(len(seen), 2)
+        screen.assert_called_once()
+
+    def test_gemini_failure_skips_candidate_and_reports_warning(self):
+        def fake(url, _header, _key, _params):
+            if url.endswith("mixed_companies/search"):
+                return {"organizations": [{"id": "a", "name": "Firm", "website_url": "https://firm.test"}]}
+            return {"web": {"results": [{"url": "https://firm.test/bim", "title": "BIM projects"}]}}
+        env = {"APOLLO_API_KEY": "secret", "BRAVE_SEARCH_API_KEY": "secret", "GEMINI_API_KEY": "secret"}
+        with patch.dict(os.environ, env), patch.object(provider_search, "request_json", side_effect=fake), patch.object(provider_search, "gemini_buyer_candidate", side_effect=provider_search.ProviderError("Gemini failed")):
+            result = provider_search.discover({"countries": ["India"]}, "training")
+        self.assertEqual(result["companies"], [])
+        self.assertEqual(result["warnings"], ["Gemini failed"])
+
+    def test_gemini_classifier_requires_explicit_true(self):
+        def opened(request, timeout):
+            self.assertEqual(request.get_method(), "POST")
+            self.assertEqual(request.headers["X-goog-api-key"], "secret")
+            response = {"candidates": [{"content": {"parts": [{"text": '{"qualified": "yes"}'}]}}]}
+            return io.BytesIO(json.dumps(response).encode())
+        with patch.object(provider_search.urllib.request, "urlopen", side_effect=opened):
+            qualified = provider_search.gemini_buyer_candidate({"name": "Firm", "website_url": "https://firm.test"}, "training", [{"url": "https://firm.test/bim", "title": "BIM projects"}], "secret")
+        self.assertFalse(qualified)
+
     def test_obvious_job_boards_and_publications_skip_paid_followup_calls(self):
         seen = []
         def fake(url, _header, _key, _params):

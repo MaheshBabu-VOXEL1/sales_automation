@@ -215,6 +215,7 @@ def get_icp(db, service: str) -> dict:
     result.update(profile)
     result["search_mode"] = "Apollo + Brave" if (os.environ.get("APOLLO_API_KEY") or os.environ.get("BRAVE_SEARCH_API_KEY")) else "OpenStreetMap city samples"
     result["enrichment_enabled"] = os.environ.get("APOLLO_ENRICH_DETAILS") == "1"
+    result["ai_qualification_enabled"] = bool(os.environ.get("GEMINI_API_KEY"))
     return result
 
 
