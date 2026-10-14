@@ -1,4 +1,4 @@
-const state = { service: null, icp: null, compatibleBackend: true, leads: [], filter: "all", budget: null };
+const state = { service: null, icp: null, compatibleBackend: true, leads: [], filter: "all", budget: null, history: {}, reviewing: null };
 const countries = [["US", "USA"], ["AE", "UAE"], ["SA", "Saudi Arabia"], ["IN", "India"], ["SG", "Singapore"]];
 const countryCode = (name) => countries.find((item) => item[1] === name)?.[0] || null;
 const leadCountry = (lead) => lead.country || (lead.source_id?.startsWith("apollo/") && state.icp?.countries?.length === 1 ? state.icp.countries[0] : "");
@@ -53,6 +53,7 @@ function message(text, error = false) {
 async function openService(service) {
   state.service = service;
   state.filter = "all";
+  state.history = {};
   $("#home").classList.add("hidden");
   $("#workspace").classList.remove("hidden");
   $("#message").classList.add("hidden");
@@ -117,29 +118,93 @@ async function loadLeads() {
   renderLeads();
 }
 
+const isActive = (lead) => (lead.review_decision || "active") === "active";
+const reasonLabel = (code) => state.icp?.review_reasons?.[code] || code || "No reason recorded";
+const shortDate = (value) => value ? new Date(value).toLocaleDateString() : "";
+
+function whyListed(lead) {
+  const apollo = lead.source_id?.startsWith("apollo/");
+  const reason = lead.match_reason ? esc(lead.match_reason) : "No reason recorded. Saved before the app recorded why candidates were listed; verify fit on the website.";
+  let ai;
+  if (lead.ai_screened && lead.ai_reason) ai = `Gemini${lead.ai_model ? ` (${esc(lead.ai_model)})` : ""}${lead.screened_at ? `, ${esc(shortDate(lead.screened_at))}` : ""}: “${esc(lead.ai_reason)}” AI judgement, not proof of need.`;
+  else if (lead.ai_screened) ai = "Gemini marked it a plausible buyer on an earlier search; its reason was not recorded.";
+  else ai = apollo ? "Gemini screening not recorded." : "Public map candidate; not AI-screened.";
+  return `<div class="why-listed"><small>${reason}</small><small class="ai-line">${ai}</small></div>`;
+}
+
+function sourceCell(lead) {
+  const source = safeUrl(lead.source_url);
+  if (!source) return "—";
+  const label = lead.source_id?.startsWith("apollo/") ? "Apollo company record: website" : lead.source_id?.match(/^(node|way|relation)\//) ? "OpenStreetMap record" : "Source";
+  return `<a class="source-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">${label} ↗</a>`;
+}
+
+function historyText(item) {
+  const d = item.detail || {};
+  const when = new Date(item.created_at).toLocaleString();
+  const note = d.note ? ` Note: “${esc(d.note)}”` : "";
+  if (item.event === "discovered") return `${when}: added by ${esc(d.source || "search")}.`;
+  if (item.event === "found_again") return `${when}: found again by ${esc(d.source || "search")}.`;
+  if (item.event === "interest") return `${when}: interest changed from ${esc(d.from)} to ${esc(d.to)}.${note}`;
+  if (item.event === "review") return d.to === "active" ? `${when}: restored to active candidates.${note}` : `${when}: ${d.to === "rejected" ? "rejected" : "archived"}: ${esc(reasonLabel(d.reason))}.${note}`;
+  return `${when}: ${esc(item.event)}`;
+}
+
 function renderLeads() {
   const leads = state.leads;
-  $("#stat-total").textContent = leads.length;
-  $("#stat-contact").textContent = leads.filter((lead) => lead.email || lead.phone).length;
-  $("#stat-interested").textContent = leads.filter((lead) => lead.status === "interested").length;
-  $("#stat-not").textContent = leads.filter((lead) => lead.status === "not_interested").length;
-  $("#country-summary").innerHTML = (state.icp?.countries || []).map((name) => `<span><strong>${esc(name)}</strong><small>${leads.filter((lead) => leadCountry(lead).toLowerCase() === name.toLowerCase() || leadCountry(lead) === countryCode(name)).length} companies</small></span>`).join("");
+  const active = leads.filter(isActive);
+  const excluded = leads.length - active.length;
+  $("#stat-total").textContent = active.length;
+  $("#stat-total-label").textContent = excluded ? `Active candidates (${excluded} rejected/archived)` : "Active candidates";
+  $("#stat-contact").textContent = active.filter((lead) => lead.email || lead.phone).length;
+  $("#stat-interested").textContent = active.filter((lead) => lead.status === "interested").length;
+  $("#stat-not").textContent = active.filter((lead) => lead.status === "not_interested").length;
+  $("#country-summary").innerHTML = (state.icp?.countries || []).map((name) => `<span><strong>${esc(name)}</strong><small>${active.filter((lead) => leadCountry(lead).toLowerCase() === name.toLowerCase() || leadCountry(lead) === countryCode(name)).length} companies</small></span>`).join("");
   const text = $("#lead-search").value.trim().toLowerCase();
-  const visible = leads.filter((lead) => (state.filter === "all" || (state.filter === "ai_screened" ? Boolean(lead.ai_screened) : lead.status === state.filter)) && lead.company.toLowerCase().includes(text));
+  const matchesFilter = (lead) => state.filter === "excluded" ? !isActive(lead)
+    : isActive(lead) && (state.filter === "all" || (state.filter === "ai_screened" ? Boolean(lead.ai_screened) : lead.status === state.filter));
+  const visible = leads.filter((lead) => matchesFilter(lead) && lead.company.toLowerCase().includes(text));
   $("#empty").classList.toggle("hidden", visible.length > 0);
-  $("#empty").textContent = leads.length ? "No companies match this filter." : "No companies yet. Set your ICP and choose “Search companies.”";
+  $("#empty").textContent = state.filter === "excluded" ? "No rejected or archived companies." : leads.length ? "No companies match this filter." : "No companies yet. Set your ICP and choose “Search companies.”";
   $("#lead-rows").innerHTML = visible.map((lead) => {
     const web = safeUrl(lead.website);
-    const source = safeUrl(lead.source_url);
     const apollo = lead.source_id?.startsWith("apollo/");
-    const sector = lead.category && lead.category !== "business" ? `Apollo category: ${esc(lead.category)}. ` : "Industry unconfirmed. ";
-    const screening = lead.ai_screened ? `Gemini-screened: marked plausible on a prior search. ${sector}Verify current need before outreach.` : apollo ? `Gemini screening not recorded. ${sector}Earlier saved candidate; verify buyer fit.` : "Gemini screening not recorded. Public map candidate; verify buyer fit.";
     const email = lead.email ? `<span class="contact-line"><small>${apollo ? "Verified work email from Apollo" : "Public email (unverified)"}</small><a href="mailto:${encodeURIComponent(lead.email)}">${esc(lead.email)}</a></span>` : "<small>Work email unavailable</small>";
     const phone = lead.phone ? `<span class="contact-line"><small>${apollo ? "Company phone, not a direct line" : "Public phone (unverified)"}</small><a href="tel:${encodeURIComponent(lead.phone)}">${esc(lead.phone)}</a></span>` : "";
-    const person = lead.contact_name ? `<strong>${esc(lead.contact_name)}</strong><small>${esc(lead.contact_title)}</small>${lead.contact_name.includes("*") ? "<small>Name partly hidden by provider</small>" : ""}` : "<small>Decision-maker not found</small>";
-    const contact = `${person}${email}${phone}`;
-    return `<tr><td data-label="Company"><strong>${esc(lead.company)}</strong><small>${esc(lead.category)}</small>${web ? `<div><a class="source-link" href="${esc(web)}" target="_blank" rel="noopener noreferrer">Website ↗</a></div>` : ""}</td><td data-label="Screening status"><small>${screening}</small></td><td data-label="Location">${esc(lead.city)}<br><small>${esc(leadCountry(lead))}</small></td><td data-label="Contact">${contact}</td><td data-label="Review / interest"><select class="status-select ${esc(lead.status)}" data-id="${lead.id}" aria-label="Interest status for ${esc(lead.company)}"><option value="new" ${lead.status === "new" ? "selected" : ""}>Needs review</option><option value="interested" ${lead.status === "interested" ? "selected" : ""}>Interested</option><option value="not_interested" ${lead.status === "not_interested" ? "selected" : ""}>Not interested</option></select>${lead.notes ? `<small class="contact-line">${esc(lead.notes)}</small>` : ""}</td><td data-label="Source">${source ? `<a class="source-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">Source ↗</a>` : "—"}</td></tr>`;
+    const person = lead.contact_name ? `<span class="contact-line"><strong>${esc(lead.contact_name)}</strong><small>${esc(lead.contact_title)}</small>${lead.contact_name.includes("*") ? "<small>Name partly hidden by provider</small>" : ""}</span>` : "<small>Decision-maker not found</small>";
+    const historyButton = `<button type="button" class="link-button" data-action="history" data-id="${lead.id}">${state.history[lead.id] ? "Hide history" : "History"}</button>`;
+    const review = isActive(lead)
+      ? `<select class="status-select ${esc(lead.status)}" data-id="${lead.id}" aria-label="Interest status for ${esc(lead.company)}"><option value="new" ${lead.status === "new" ? "selected" : ""}>Needs review</option><option value="interested" ${lead.status === "interested" ? "selected" : ""}>Interested</option><option value="not_interested" ${lead.status === "not_interested" ? "selected" : ""}>Not interested</option></select>${lead.notes ? `<small class="contact-line">${esc(lead.notes)}</small>` : ""}<div class="review-actions"><button type="button" class="link-button danger" data-action="rejected" data-id="${lead.id}">Reject</button><button type="button" class="link-button" data-action="archived" data-id="${lead.id}">Archive</button>${historyButton}</div>`
+      : `<span class="excluded-badge ${esc(lead.review_decision)}">${lead.review_decision === "rejected" ? "Rejected" : "Archived"}</span><small class="contact-line">${esc(reasonLabel(lead.review_reason))}${lead.reviewed_at ? `, ${esc(shortDate(lead.reviewed_at))}` : ""}</small>${lead.review_note ? `<small class="contact-line">“${esc(lead.review_note)}”</small>` : ""}<div class="review-actions"><button type="button" class="link-button" data-action="active" data-id="${lead.id}">Restore</button>${historyButton}</div>`;
+    const row = `<tr><td data-label="Company"><strong>${esc(lead.company)}</strong><small>${esc(lead.category)}</small>${web ? `<div><a class="source-link" href="${esc(web)}" target="_blank" rel="noopener noreferrer">Website ↗</a></div>` : ""}</td><td data-label="Why listed">${whyListed(lead)}</td><td data-label="Location">${esc(lead.city)}<br><small>${esc(leadCountry(lead))}</small></td><td data-label="Contact">${person}${email}${phone}</td><td data-label="Review / interest">${review}</td><td data-label="Source">${sourceCell(lead)}</td></tr>`;
+    const items = state.history[lead.id];
+    const history = items ? `<tr class="history-row"><td colspan="6" data-label="History">${items.length ? `<ul class="history-list">${items.map((item) => `<li>${historyText(item)}</li>`).join("")}</ul>` : "<small>No history recorded yet. Events are recorded from this version onward.</small>"}</td></tr>` : "";
+    return row + history;
   }).join("");
+}
+
+function openReview(lead, decision) {
+  state.reviewing = { lead, decision };
+  const form = $("#review-form");
+  const reasons = Object.entries(state.icp?.review_reasons || {}).filter(([code]) => decision === "archived" || code !== "no_current_need");
+  form.elements.reason.innerHTML = `<option value="">Choose a reason</option>` + reasons.map(([code, label]) => `<option value="${esc(code)}">${esc(label)}</option>`).join("");
+  if (decision === "archived") form.elements.reason.value = "no_current_need";
+  form.elements.note.value = "";
+  $("#review-title").textContent = `${decision === "rejected" ? "Reject" : "Archive"} ${lead.company}`;
+  $("#review-help").textContent = decision === "rejected"
+    ? "Rejected companies leave the active list and are skipped by later paid searches. Nothing is deleted; you can restore it."
+    : "Archived companies leave the active list for now and are skipped by later paid searches. Nothing is deleted; you can restore it.";
+  $("#review-submit").textContent = decision === "rejected" ? "Reject" : "Archive";
+  $("#review-error").classList.add("hidden");
+  $("#review-dialog").showModal();
+}
+
+async function saveReview(lead, decision, reason = "", note = "") {
+  const updated = await api(`/api/services/${state.service}/leads/${lead.id}/review`, { method: "PATCH", body: JSON.stringify({ decision, reason, notes: note }) });
+  state.leads = state.leads.map((item) => item.id === updated.id ? updated : item);
+  if (state.history[lead.id]) state.history[lead.id] = await api(`/api/services/${state.service}/leads/${lead.id}/history`);
+  renderLeads();
+  message(decision === "active" ? `${lead.company} restored to active candidates.` : `${lead.company} ${decision === "rejected" ? "rejected" : "archived"}. Its record and history are kept.`);
 }
 
 document.querySelectorAll(".service-card").forEach((card) => card.addEventListener("click", () => openService(card.dataset.service)));
@@ -168,7 +233,7 @@ These are worst-case request counts; providers may charge credits for them. Cont
     await loadBudget();
     const searched = result.coverage.length;
     const failures = result.coverage.filter((item) => item.error).map((item) => item.country);
-    message(`${result.source}: checked ${searched} selected countr${searched === 1 ? "y" : "ies"}. Found ${result.found} candidate companies; ${result.added} added.${result.warnings?.length ? ` Some checks failed: ${result.warnings.join(" ")}` : ""}${failures.length ? ` Search errors: ${failures.join(", ")}.` : ""}${result.usage ? ` Provider requests sent: ${requestCounts(result.usage.actual)} (estimate was up to ${requestCounts(result.usage.estimate)}).` : ""}`, Boolean(result.warnings?.length || failures.length));
+    message(`${result.source}: checked ${searched} selected countr${searched === 1 ? "y" : "ies"}. Found ${result.found} candidate companies; ${result.added} added.${result.warnings?.length ? ` Some checks failed: ${result.warnings.join(" ")}` : ""}${failures.length ? ` Search errors: ${failures.join(", ")}.` : ""}${result.skipped_reviewed ? ` Skipped ${result.skipped_reviewed} rejected or archived compan${result.skipped_reviewed === 1 ? "y" : "ies"}.` : ""}${result.usage ? ` Provider requests sent: ${requestCounts(result.usage.actual)} (estimate was up to ${requestCounts(result.usage.estimate)}).` : ""}`, Boolean(result.warnings?.length || failures.length));
   } catch (error) {
     message(error.message, true);
     if (error.budget) renderBudget(error.budget); else if (state.icp?.search_mode === "Apollo + Brave") await loadBudget();
@@ -181,6 +246,38 @@ document.querySelectorAll(".tabs button").forEach((button) => button.addEventLis
   renderLeads();
 }));
 $("#lead-search").addEventListener("input", renderLeads);
+$("#lead-rows").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  const lead = state.leads.find((item) => String(item.id) === button.dataset.id);
+  if (!lead) return;
+  try {
+    if (button.dataset.action === "history") {
+      if (state.history[lead.id]) delete state.history[lead.id];
+      else state.history[lead.id] = await api(`/api/services/${state.service}/leads/${lead.id}/history`);
+      renderLeads();
+    } else if (button.dataset.action === "active") {
+      await saveReview(lead, "active");
+    } else {
+      openReview(lead, button.dataset.action);
+    }
+  } catch (error) { message(error.message, true); }
+});
+$("#review-cancel").addEventListener("click", () => { $("#review-dialog").close(); state.reviewing = null; });
+$("#review-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const { lead, decision } = state.reviewing || {};
+  if (!lead) return;
+  const form = $("#review-form");
+  try {
+    await saveReview(lead, decision, form.elements.reason.value, form.elements.note.value.trim());
+    $("#review-dialog").close();
+    state.reviewing = null;
+  } catch (error) {
+    $("#review-error").textContent = error.message;
+    $("#review-error").classList.remove("hidden");
+  }
+});
 $("#lead-rows").addEventListener("change", async (event) => {
   const select = event.target.closest(".status-select");
   if (!select) return;

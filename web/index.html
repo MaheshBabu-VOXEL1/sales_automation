@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Voxel1 | Prospect Desk</title>
   <link rel="stylesheet" href="/style.css">
-  <link rel="stylesheet" href="/extra.css?v=4">
+  <link rel="stylesheet" href="/extra.css?v=5">
 </head>
 <body>
   <header class="topbar">
@@ -54,16 +54,26 @@
       <p id="message" class="message hidden" role="status"></p>
 
       <div class="section-head leads-heading"><div><span class="step">02</span><h2>Candidate review</h2></div><span class="hint">Check company fit and contacts before outreach</span></div>
-      <div class="stats"><div><strong id="stat-total">0</strong><span>Candidate companies saved</span></div><div><strong id="stat-contact">0</strong><span>With email or phone</span></div><div><strong id="stat-interested">0</strong><span>Interested</span></div><div><strong id="stat-not">0</strong><span>Not interested</span></div></div>
+      <div class="stats"><div><strong id="stat-total">0</strong><span id="stat-total-label">Active candidates</span></div><div><strong id="stat-contact">0</strong><span>With email or phone</span></div><div><strong id="stat-interested">0</strong><span>Interested</span></div><div><strong id="stat-not">0</strong><span>Not interested</span></div></div>
       <div id="country-summary" class="country-summary" aria-label="Results by country"></div>
       <div class="table-panel">
-        <div class="table-toolbar"><div class="tabs" role="group" aria-label="Filter companies"><button data-filter="all" class="active">All</button><button data-filter="ai_screened">Gemini-screened</button><button data-filter="new">Unreviewed</button><button data-filter="interested">Interested</button><button data-filter="not_interested">Not interested</button></div><input id="lead-search" type="search" placeholder="Find a company" aria-label="Find a company"></div>
-        <div class="table-scroll"><table><thead><tr><th>Company</th><th>Screening status</th><th>Location</th><th>Contact</th><th>Review / interest</th><th>Source</th></tr></thead><tbody id="lead-rows"></tbody></table></div>
+        <div class="table-toolbar"><div class="tabs" role="group" aria-label="Filter companies"><button data-filter="all" class="active">All</button><button data-filter="ai_screened">Gemini-screened</button><button data-filter="new">Unreviewed</button><button data-filter="interested">Interested</button><button data-filter="not_interested">Not interested</button><button data-filter="excluded">Rejected / archived</button></div><input id="lead-search" type="search" placeholder="Find a company" aria-label="Find a company"></div>
+        <div class="table-scroll"><table><thead><tr><th>Company</th><th>Why listed</th><th>Location</th><th>Contact</th><th>Review / interest</th><th>Source</th></tr></thead><tbody id="lead-rows"></tbody></table></div>
         <div id="empty" class="empty">No companies yet. Set your ICP and choose “Search selected countries.”</div>
       </div>
       <p class="disclaimer" id="search-disclaimer">Older saved candidates have no recorded Gemini screening status. A Gemini-screened result is a plausible buyer, not a confirmed training or BIM services customer. No messages are sent automatically.</p>
     </section>
   </main>
-  <script src="/app.js?v=11" defer></script>
+  <dialog id="review-dialog" class="review-dialog">
+    <form id="review-form" method="dialog">
+      <h3 id="review-title">Reject company</h3>
+      <p id="review-help" class="muted"></p>
+      <label class="field">Reason<select name="reason" required></select></label>
+      <label class="field">Note <span class="optional">(required for Other)</span><textarea name="note" maxlength="500" rows="3"></textarea></label>
+      <p id="review-error" class="message error hidden" role="alert"></p>
+      <div class="dialog-actions"><button type="button" id="review-cancel" class="button secondary">Cancel</button><button type="submit" id="review-submit" class="button primary">Reject</button></div>
+    </form>
+  </dialog>
+  <script src="/app.js?v=12" defer></script>
 </body>
 </html>

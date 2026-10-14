@@ -82,6 +82,19 @@ BUDGET_ENV = {
     "gemini": "VOXEL1_MONTHLY_GEMINI_REQUESTS",
 }
 PROVIDERS = ("apollo", "brave", "gemini")
+# Rejecting or archiving hides a candidate from the active list and from later
+# paid follow-up checks; the row and its history are kept.
+REVIEW_DECISIONS = ("active", "rejected", "archived")
+REVIEW_REASONS = {
+    "not_target_industry": "Not in a target industry",
+    "vendor_or_competitor": "BIM/training vendor or competitor",
+    "job_board_or_publication": "Job board, directory or publication",
+    "wrong_location": "Outside the target countries",
+    "wrong_size": "Outside the target company size",
+    "duplicate": "Duplicate of another company",
+    "no_current_need": "No current need; revisit later",
+    "other": "Other (see note)",
+}
 BUDGET_LOCK_ID = 4207001  # PostgreSQL advisory lock serializing reservations.
 
 
@@ -133,7 +146,8 @@ def init_db() -> None:
             discovered_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             UNIQUE(service, source_id)
         )""")
-        for column in ("contact_name", "contact_title", "evidence_url"):
+        for column in ("contact_name", "contact_title", "evidence_url", "match_reason", "ai_reason", "ai_model", "screened_at",
+                       "review_reason", "review_note", "reviewed_at"):
             if DATABASE_URL:
                 run(db, f"ALTER TABLE leads ADD COLUMN IF NOT EXISTS {column} TEXT NOT NULL DEFAULT ''")
             elif column not in {row["name"] for row in run(db, "PRAGMA table_info(leads)")}:
@@ -142,6 +156,15 @@ def init_db() -> None:
             run(db, "ALTER TABLE leads ADD COLUMN IF NOT EXISTS ai_screened INTEGER NOT NULL DEFAULT 0")
         elif "ai_screened" not in {row["name"] for row in run(db, "PRAGMA table_info(leads)")}:
             run(db, "ALTER TABLE leads ADD COLUMN ai_screened INTEGER NOT NULL DEFAULT 0")
+        if DATABASE_URL:
+            run(db, "ALTER TABLE leads ADD COLUMN IF NOT EXISTS review_decision TEXT NOT NULL DEFAULT 'active'")
+        elif "review_decision" not in {row["name"] for row in run(db, "PRAGMA table_info(leads)")}:
+            run(db, "ALTER TABLE leads ADD COLUMN review_decision TEXT NOT NULL DEFAULT 'active'")
+        run(db, f"""CREATE TABLE IF NOT EXISTS lead_events (
+            id {identity} PRIMARY KEY,
+            lead_id INTEGER NOT NULL, service TEXT NOT NULL, event TEXT NOT NULL,
+            detail_json TEXT NOT NULL DEFAULT '{{}}', created_at TEXT NOT NULL
+        )""")
         run(db, f"""CREATE TABLE IF NOT EXISTS search_runs (
             id {identity} PRIMARY KEY,
             service TEXT NOT NULL, month TEXT NOT NULL, status TEXT NOT NULL,
@@ -317,6 +340,22 @@ def finish_search(run_id: int, meter: provider_search.Meter, error: str = "") ->
             ("failed" if error else "completed", json.dumps(meter.totals()), error[:500], now(), run_id))
 
 
+def log_event(db, lead_id: int, service: str, event: str, detail: dict) -> None:
+    run(db, "INSERT INTO lead_events (lead_id, service, event, detail_json, created_at) VALUES (?, ?, ?, ?, ?)",
+        (lead_id, service, event, json.dumps(detail), now()))
+
+
+def storage_info(db) -> dict:
+    """Non-secret description of where data is stored, for checking a deployment."""
+    counts = {table: run(db, f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"] for table in ("leads", "lead_events", "search_runs", "provider_usage")}
+    if DATABASE_URL:
+        host = urllib.parse.urlparse(DATABASE_URL).hostname or ""
+        return {"database": "postgresql", "server_version": run(db, "SHOW server_version").fetchone()["server_version"],
+                "render_internal_host": host.startswith("dpg-") and "." not in host, "row_counts": counts}
+    return {"database": "sqlite", "data_directory_is_mount": os.path.ismount(DB_PATH.parent),
+            "note": "SQLite keeps data only if its directory is on a persistent disk.", "row_counts": counts}
+
+
 def get_icp(db, service: str) -> dict:
     row = run(db, "SELECT * FROM icps WHERE service = ?", (service,)).fetchone()
     result = dict(row)
@@ -330,6 +369,7 @@ def get_icp(db, service: str) -> dict:
     result["search_mode"] = "Apollo + Brave" if (os.environ.get("APOLLO_API_KEY") or os.environ.get("BRAVE_SEARCH_API_KEY")) else "OpenStreetMap city samples"
     result["enrichment_enabled"] = os.environ.get("APOLLO_ENRICH_DETAILS") == "1"
     result["ai_qualification_enabled"] = bool(os.environ.get("GEMINI_API_KEY"))
+    result["review_reasons"] = REVIEW_REASONS
     return result
 
 
@@ -386,6 +426,7 @@ def find_companies(icp: dict) -> dict:
                 "email": email[:254] if email else None, "phone": phone[:100] if phone else None,
                 "website": website[:500] if website else None,
                 "source_url": f'https://www.openstreetmap.org/{element["type"]}/{element["id"]}',
+                "match_reason": f"OpenStreetMap lists it as a {next((tags.get(k) for k, _ in filters if tags.get(k)), 'business')} within 12 km of {city}.",
             })
             count += 1
         coverage.append({"country": country, "city": city, "found": count})
@@ -513,6 +554,9 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["api", "budget"]:
             with connect() as db:
                 return self.respond(200, budget_status(db))
+        if parts == ["api", "system"]:
+            with connect() as db:
+                return self.respond(200, storage_info(db))
         try:
             if parts[:2] != ["api", "services"]:
                 return self.respond(404, {"error": "Not found"})
@@ -523,6 +567,9 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts) == 4 and parts[3] == "leads":
                     rows = run(db, "SELECT * FROM leads WHERE service = ? ORDER BY updated_at DESC, id DESC", (service,)).fetchall()
                     return self.respond(200, [dict(row) for row in rows])
+                if len(parts) == 6 and parts[3] == "leads" and parts[5] == "history":
+                    rows = run(db, "SELECT event, detail_json, created_at FROM lead_events WHERE lead_id=? AND service=? ORDER BY id DESC", (int(parts[4]), service)).fetchall()
+                    return self.respond(200, [{"event": row["event"], "detail": json.loads(row["detail_json"]), "created_at": row["created_at"]} for row in rows])
         except ValueError as exc:
             return self.respond(400, {"error": str(exc)})
         self.respond(404, {"error": "Not found"})
@@ -614,7 +661,10 @@ class Handler(BaseHTTPRequestHandler):
                             return self.respond(409, {"error": str(exc), "budget": budget_status(db)})
                     meter = provider_search.Meter(allowance)
                     try:
-                        discovery = provider_search.discover(icp, service, meter)
+                        with connect() as db:
+                            skip_ids = {row["source_id"].split("/", 1)[1] for row in run(db, "SELECT source_id FROM leads WHERE service=? AND review_decision<>'active'", (service,))
+                                        if row["source_id"].startswith("apollo/")}
+                        discovery = provider_search.discover(icp, service, meter, skip_ids)
                     except Exception as exc:
                         finish_search(run_id, meter, str(exc) or exc.__class__.__name__)
                         raise
@@ -624,12 +674,18 @@ class Handler(BaseHTTPRequestHandler):
                     discovery = find_companies(icp)
                 companies = discovery["companies"]
                 inserted = 0
+                skipped = discovery.get("skipped_reviewed", 0)
                 with connect() as db:
                     for company in companies:
-                        existing = run(db, "SELECT id FROM leads WHERE service=? AND source_id=?", (service, company["source_id"])).fetchone()
+                        existing = run(db, "SELECT id, review_decision FROM leads WHERE service=? AND source_id=?", (service, company["source_id"])).fetchone()
+                        if existing and existing["review_decision"] != "active":
+                            skipped += 1  # A rejected or archived candidate keeps its saved record unchanged.
+                            continue
+                        screened = bool(company.get("ai_screened"))
                         cur = run(db, """INSERT INTO leads
-                            (service, source_id, company, category, city, country, email, phone, website, source_url, contact_name, contact_title, evidence_url, ai_screened, discovered_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(service, source_id) DO UPDATE SET
+                            (service, source_id, company, category, city, country, email, phone, website, source_url, contact_name, contact_title, evidence_url, ai_screened,
+                             match_reason, ai_reason, ai_model, screened_at, discovered_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(service, source_id) DO UPDATE SET
                             company=excluded.company,
                             category=CASE WHEN excluded.category <> 'business' THEN excluded.category ELSE leads.category END,
                             city=CASE WHEN excluded.city <> '' THEN excluded.city ELSE leads.city END,
@@ -640,10 +696,18 @@ class Handler(BaseHTTPRequestHandler):
                             contact_title=CASE WHEN excluded.contact_title <> '' THEN excluded.contact_title ELSE leads.contact_title END,
                             evidence_url=excluded.evidence_url,
                             ai_screened=CASE WHEN excluded.ai_screened=1 THEN 1 ELSE leads.ai_screened END,
+                            match_reason=CASE WHEN excluded.match_reason <> '' THEN excluded.match_reason ELSE leads.match_reason END,
+                            ai_reason=CASE WHEN excluded.ai_screened=1 THEN excluded.ai_reason ELSE leads.ai_reason END,
+                            ai_model=CASE WHEN excluded.ai_screened=1 THEN excluded.ai_model ELSE leads.ai_model END,
+                            screened_at=CASE WHEN excluded.ai_screened=1 THEN excluded.screened_at ELSE leads.screened_at END,
                             updated_at=excluded.updated_at""",
-                            (service, company["source_id"], company["company"], company["category"], company["city"], company["country"], company["email"], company["phone"], company["website"], company["source_url"], company.get("contact_name", ""), company.get("contact_title", ""), company.get("evidence_url", ""), int(bool(company.get("ai_screened"))), now(), now()))
+                            (service, company["source_id"], company["company"], company["category"], company["city"], company["country"], company["email"], company["phone"], company["website"], company["source_url"], company.get("contact_name", ""), company.get("contact_title", ""), company.get("evidence_url", ""), int(screened),
+                             company.get("match_reason", ""), company.get("ai_reason", "") if screened else "", company.get("ai_model", "") if screened else "", now() if screened else "", now(), now()))
+                        lead_id = existing["id"] if existing else run(db, "SELECT id FROM leads WHERE service=? AND source_id=?", (service, company["source_id"])).fetchone()["id"]
+                        log_event(db, lead_id, service, "found_again" if existing else "discovered",
+                                  {"source": discovery.get("source", "OpenStreetMap"), "match_reason": company.get("match_reason", ""), "ai_screened": screened})
                         inserted += int(existing is None and cur.rowcount > 0)
-                return self.respond(200, {"found": len(companies), "added": inserted, "source": discovery.get("source", "OpenStreetMap"), "coverage": discovery["coverage"], "warnings": discovery.get("warnings", []), "usage": discovery.get("usage")})
+                return self.respond(200, {"found": len(companies), "added": inserted, "source": discovery.get("source", "OpenStreetMap"), "coverage": discovery["coverage"], "warnings": discovery.get("warnings", []), "usage": discovery.get("usage"), "skipped_reviewed": skipped})
             finally:
                 search_lock.release()
         except ValueError as exc:
@@ -657,19 +721,37 @@ class Handler(BaseHTTPRequestHandler):
         parts = urllib.parse.urlparse(self.path).path.strip("/").split("/")
         try:
             service = self.service_from_path(parts)
-            if parts[:4] != ["api", "services", service, "leads"] or len(parts) != 6 or parts[5] != "status":
+            if parts[:4] != ["api", "services", service, "leads"] or len(parts) != 6 or parts[5] not in ("status", "review"):
                 return self.respond(404, {"error": "Not found"})
             lead_id = int(parts[4])
             payload = self.read_json()
-            status = payload.get("status")
             notes = str(payload.get("notes", "")).strip()[:500]
-            if status not in ("new", "interested", "not_interested"):
-                raise ValueError("Invalid interest status.")
+            if parts[5] == "status":
+                status = payload.get("status")
+                if status not in ("new", "interested", "not_interested"):
+                    raise ValueError("Invalid interest status.")
+            else:
+                decision = payload.get("decision")
+                reason = payload.get("reason") or ""
+                if decision not in REVIEW_DECISIONS:
+                    raise ValueError("Choose reject, archive or restore.")
+                if decision != "active" and reason not in REVIEW_REASONS:
+                    raise ValueError("Choose a reason for rejecting or archiving this company.")
+                if decision != "active" and reason == "other" and not notes:
+                    raise ValueError("Add a short note when the reason is Other.")
+                if decision == "active":
+                    reason = ""
             with connect() as db:
-                result = run(db, "UPDATE leads SET status=?, notes=?, updated_at=? WHERE id=? AND service=?",
-                                    (status, notes, now(), lead_id, service))
-                if not result.rowcount:
+                current = run(db, "SELECT * FROM leads WHERE id=? AND service=?", (lead_id, service)).fetchone()
+                if not current:
                     return self.respond(404, {"error": "Lead not found"})
+                if parts[5] == "status":
+                    run(db, "UPDATE leads SET status=?, notes=?, updated_at=? WHERE id=?", (status, notes, now(), lead_id))
+                    log_event(db, lead_id, service, "interest", {"from": current["status"], "to": status, "note": notes})
+                else:
+                    run(db, "UPDATE leads SET review_decision=?, review_reason=?, review_note=?, reviewed_at=?, updated_at=? WHERE id=?",
+                        (decision, reason, notes, now(), now(), lead_id))
+                    log_event(db, lead_id, service, "review", {"from": current["review_decision"], "to": decision, "reason": reason, "note": notes})
                 return self.respond(200, dict(run(db, "SELECT * FROM leads WHERE id=?", (lead_id,)).fetchone()))
         except (ValueError, json.JSONDecodeError) as exc:
             self.respond(400, {"error": str(exc)})

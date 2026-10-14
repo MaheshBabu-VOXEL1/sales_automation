@@ -91,7 +91,9 @@ def obvious_non_buyer(org):
 
 
 def gemini_buyer_candidate(org, service, hits, api_key):
-    """Fail closed unless Gemini can identify a plausible service buyer from public evidence."""
+    """Fail closed unless Gemini can identify a plausible service buyer from public evidence.
+
+    Returns (qualified, short model-written reason)."""
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
     if not re.fullmatch(r"[a-zA-Z0-9._-]+", model):
         raise ProviderError("Invalid Gemini model name.")
@@ -116,12 +118,13 @@ def gemini_buyer_candidate(org, service, hits, api_key):
         with urllib.request.urlopen(req, timeout=20) as response:
             payload = json.load(response)
         answer = json.loads(payload["candidates"][0]["content"]["parts"][0]["text"])
-        return answer.get("qualified") is True
+        return answer.get("qualified") is True, str(answer.get("reason") or "").strip()[:240]
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError) as exc:
         raise ProviderError("Gemini qualification failed; no uncertain candidate was saved. Check its API key, model and quota.") from exc
 
 
-def discover(icp, service, meter=None):
+def discover(icp, service, meter=None, skip_ids=()):
+    """skip_ids: Apollo organization IDs the team rejected or archived; no further requests are made for them."""
     meter = meter or Meter()
     apollo_key = os.environ.get("APOLLO_API_KEY", "")
     brave_key = os.environ.get("BRAVE_SEARCH_API_KEY", "")
@@ -148,8 +151,14 @@ def discover(icp, service, meter=None):
     warnings = []
     enrich = os.environ.get("APOLLO_ENRICH_DETAILS") == "1"
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    gemini_model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    skipped_reviewed = 0
+    searched = "Apollo company search in " + ", ".join(countries[:5]) + (f" for {', '.join(keywords[:5])}" if keywords else "")
     for org in response["organizations"][:LIMIT]:
         if not isinstance(org, dict) or not org.get("id") or not org.get("name") or obvious_non_buyer(org):
+            continue
+        if str(org["id"]) in skip_ids:
+            skipped_reviewed += 1
             continue
         website = website_of(org)
         if not website:
@@ -169,10 +178,12 @@ def discover(icp, service, meter=None):
             continue
         if not hits:
             continue  # Do not label a company relevant without a matching public page.
+        ai_reason = ""
         if gemini_key:
             try:
                 meter.charge("gemini", "buyer_screen")
-                if not gemini_buyer_candidate(org, service, hits, gemini_key):
+                qualified, ai_reason = gemini_buyer_candidate(org, service, hits, gemini_key)
+                if not qualified:
                     continue
             except ProviderError as exc:
                 warnings.append(str(exc))
@@ -184,7 +195,9 @@ def discover(icp, service, meter=None):
                       "country": str(org.get("country") or (countries[0] if len(countries) == 1 else ""))[:100], "email": None, "phone": None,
                       "website": website, "source_url": website,
                       "contact_name": "", "contact_title": "",
-                      "evidence_url": "", "ai_screened": bool(gemini_key)})
+                      "evidence_url": "", "ai_screened": bool(gemini_key),
+                      "match_reason": f"{searched} returned it. Brave found a page on {domain} mentioning {' or '.join(SERVICE_TERMS[service])}; the page itself is not stored.",
+                      "ai_reason": ai_reason, "ai_model": gemini_model if gemini_key else ""})
     for index, lead in enumerate(found):
         try:
             meter.charge("apollo", "people_search")
@@ -230,4 +243,4 @@ def discover(icp, service, meter=None):
             except ProviderError as exc:
                 warnings.append(str(exc))
     return {"companies": found, "coverage": [{"country": name, "city": None, "found": sum(c["country"].casefold() == name.casefold() for c in found)} for name in countries],
-            "warnings": list(dict.fromkeys(warnings)), "source": "Apollo + Brave"}
+            "warnings": list(dict.fromkeys(warnings)), "source": "Apollo + Brave", "skipped_reviewed": skipped_reviewed}

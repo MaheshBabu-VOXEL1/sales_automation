@@ -18,7 +18,7 @@ class ProviderSearchTest(unittest.TestCase):
                 return {"web": {"results": [{"url": "https://vendor.test/bim", "title": "BIM services"}]}}
             self.fail("Rejected lead must not trigger Apollo contact or enrichment calls")
         env = {"APOLLO_API_KEY": "secret", "BRAVE_SEARCH_API_KEY": "secret", "GEMINI_API_KEY": "secret", "APOLLO_ENRICH_DETAILS": "1"}
-        with patch.dict(os.environ, env), patch.object(provider_search, "request_json", side_effect=fake), patch.object(provider_search, "gemini_buyer_candidate", return_value=False) as screen:
+        with patch.dict(os.environ, env), patch.object(provider_search, "request_json", side_effect=fake), patch.object(provider_search, "gemini_buyer_candidate", return_value=(False, "Vendor")) as screen:
             result = provider_search.discover({"countries": ["India"]}, "training")
         self.assertEqual(result["companies"], [])
         self.assertEqual(len(seen), 2)
@@ -42,7 +42,7 @@ class ProviderSearchTest(unittest.TestCase):
             response = {"candidates": [{"content": {"parts": [{"text": '{"qualified": "yes"}'}]}}]}
             return io.BytesIO(json.dumps(response).encode())
         with patch.object(provider_search.urllib.request, "urlopen", side_effect=opened):
-            qualified = provider_search.gemini_buyer_candidate({"name": "Firm", "website_url": "https://firm.test"}, "training", [{"url": "https://firm.test/bim", "title": "BIM projects"}], "secret")
+            qualified, _reason = provider_search.gemini_buyer_candidate({"name": "Firm", "website_url": "https://firm.test"}, "training", [{"url": "https://firm.test/bim", "title": "BIM projects"}], "secret")
         self.assertFalse(qualified)
 
     def test_obvious_job_boards_and_publications_skip_paid_followup_calls(self):
@@ -113,7 +113,7 @@ class ProviderSearchTest(unittest.TestCase):
                 return {"web": {"results": [{"url": "https://example.test/bim", "title": "BIM projects"}]}}
             return {"people": []}
         env = {"APOLLO_API_KEY": "secret", "BRAVE_SEARCH_API_KEY": "secret", "GEMINI_API_KEY": "secret"}
-        with patch.dict(os.environ, env), patch.object(provider_search, "request_json", side_effect=fake), patch.object(provider_search, "gemini_buyer_candidate", return_value=True) as screen:
+        with patch.dict(os.environ, env), patch.object(provider_search, "request_json", side_effect=fake), patch.object(provider_search, "gemini_buyer_candidate", return_value=(True, "Architecture firm delivering client projects")) as screen:
             result = provider_search.discover({"countries": ["India"]}, "training")
         screen.assert_called_once()
         self.assertTrue(result["companies"][0]["ai_screened"])
