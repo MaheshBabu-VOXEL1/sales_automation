@@ -9,6 +9,10 @@
 .country-summary > span { display: flex; justify-content: space-between; gap: 6px; align-items: center; padding: 10px 12px; border: 1px solid #e1e8f1; background: #fff; border-radius: 9px; font-size: 11px; }
 .country-summary strong { color: #3f536d; }
 .country-summary small { color: #8695a7; white-space: nowrap; }
+@media (min-width: 641px) {
+  table { min-width: 1040px; }
+  th:nth-child(2), td:nth-child(2) { min-width: 225px; }
+}
 @media (max-width: 760px) { .country-summary { grid-template-columns: repeat(2, 1fr); } }
 
 /* Phone layout: keep the ICP usable and present each lead without a wide table. */
