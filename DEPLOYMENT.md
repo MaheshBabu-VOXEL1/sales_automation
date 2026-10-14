@@ -13,7 +13,7 @@ The Vercel "Other" import screen is not sufficient for this repository. `server.
 4. Set `VOXEL1_HOST=0.0.0.0`. Choose one access mode:
 
    - **Open without login:** set `VOXEL1_PUBLIC_NO_AUTH=1`. This overrides any existing `VOXEL1_AUTH_USER` and `VOXEL1_AUTH_PASSWORD` values. Anyone who reaches the public URL can view contact details, edit ICPs and interest statuses, and start searches. Use only for an intentionally public demo without sensitive data.
-   - **Private browser password prompt:** do not set `VOXEL1_PUBLIC_NO_AUTH`; set both `VOXEL1_AUTH_USER` and `VOXEL1_AUTH_PASSWORD` to private, strong values.
+   - **Private sign-in page:** set `VOXEL1_PUBLIC_NO_AUTH=0`; set both `VOXEL1_AUTH_USER` and `VOXEL1_AUTH_PASSWORD` to private, strong values.
 
    The environment variables are:
 
@@ -25,7 +25,7 @@ The Vercel "Other" import screen is not sufficient for this repository. `server.
    | `VOXEL1_AUTH_PASSWORD` | Private mode only: a strong, unique password |
 
    Render provides `PORT` to the app. Do not put passwords in GitHub, this document, or a chat message. The app refuses public binding unless a complete pair of credentials or the explicit public flag is set.
-5. Deploy and open Render's HTTPS `onrender.com` URL. In public mode it opens directly; in private mode the browser requests the username and password. Confirm that the Training and BIM ICPs load, save a harmless test value, refresh, and confirm it persists. Do one small selected-country search and verify the result appears in the company table. After a redeploy, check that saved ICPs and leads are still there.
+5. Deploy and open Render's HTTPS `onrender.com` URL. In public mode it opens directly; in private mode it shows the app's `/login` page. Sign in there with the Render credentials. Confirm that the Training and BIM ICPs load, save a harmless test value, refresh, and confirm it persists. Do one small selected-country search and verify the result appears in the company table. After a redeploy, check that saved ICPs and leads are still there.
 
 For the Apollo + Brave pilot, add `APOLLO_API_KEY` and `BRAVE_SEARCH_API_KEY` in the Render web service's **Environment** page, then save and redeploy. Keep both values secret and out of the browser. With only one key, search reports the missing one. With neither, it uses the old public-map sample. In open-without-login mode, API search is blocked until `VOXEL1_ALLOW_PUBLIC_SEARCH=1` is also set. That last setting lets any visitor spend the account's Apollo/Brave credits; prefer private access for the pilot. Search is capped at ten Apollo company candidates per click. The app does not yet enforce a monthly credit budget, and Apollo account/API access may still reject the selected endpoint.
 

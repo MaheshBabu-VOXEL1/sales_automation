@@ -32,11 +32,52 @@ class AppTest(unittest.TestCase):
         handler.rfile = io.BytesIO(data or b"")
         handler.wfile = io.BytesIO()
         handler.send_response = lambda code: setattr(handler, "response_code", code)
-        handler.send_header = lambda *args: None
+        sent_headers = {}
+        handler.send_header = lambda name, value: sent_headers.__setitem__(name, value)
         handler.end_headers = lambda: None
         getattr(handler, "do_" + method)()
         raw = handler.wfile.getvalue()
-        return handler.response_code, json.loads(raw) if raw else None
+        self.last_headers = sent_headers
+        if not raw:
+            return handler.response_code, None
+        try:
+            return handler.response_code, json.loads(raw)
+        except json.JSONDecodeError:
+            return handler.response_code, raw.decode()
+
+    def test_browser_login_page_issues_private_session_without_basic_auth(self):
+        with patch.object(server, "PUBLIC_NO_AUTH", False), patch.object(server, "AUTH_USER", "team"), patch.object(server, "AUTH_PASSWORD", "secret"):
+            server.sessions.clear()
+            code, _ = self.request("GET", "/")
+            self.assertEqual((code, self.last_headers.get("Location")), (302, "/login"))
+            self.assertNotIn("WWW-Authenticate", self.last_headers)
+            code, page = self.request("GET", "/login")
+            self.assertEqual(code, 200)
+            self.assertIn("Sign in", page)
+            code, _ = self.request("POST", "/api/login", {"username": "team", "password": "wrong"}, {"Host": "example.onrender.com", "Origin": "https://example.onrender.com"})
+            self.assertEqual(code, 401)
+            code, result = self.request("POST", "/api/login", {"username": "team", "password": "secret"}, {"Host": "example.onrender.com", "Origin": "https://example.onrender.com"})
+            self.assertEqual((code, result), (200, {"ok": True}))
+            cookie = self.last_headers["Set-Cookie"]
+            self.assertIn("HttpOnly", cookie)
+            self.assertIn("SameSite=Strict", cookie)
+            self.assertIn("Secure", cookie)
+            code, leads = self.request("GET", "/api/services/training/leads", headers={"Cookie": cookie.split(";", 1)[0]})
+            self.assertEqual((code, leads), (200, []))
+            code, _ = self.request("POST", "/api/services/training/discover", headers={"Cookie": cookie.split(";", 1)[0], "Host": "example.onrender.com", "Origin": "https://evil.example"})
+            self.assertEqual(code, 403)
+            server.sessions.clear()
+            server.failed_logins.clear()
+
+    def test_browser_login_limits_failed_attempts(self):
+        with patch.object(server, "PUBLIC_NO_AUTH", False), patch.object(server, "AUTH_USER", "team"), patch.object(server, "AUTH_PASSWORD", "secret"):
+            server.failed_logins.clear()
+            for _ in range(5):
+                code, _ = self.request("POST", "/api/login", {"username": "team", "password": "wrong"})
+                self.assertEqual(code, 401)
+            code, _ = self.request("POST", "/api/login", {"username": "team", "password": "secret"})
+            self.assertEqual(code, 429)
+            server.failed_logins.clear()
 
     def test_private_demo_requires_credentials_and_rejects_cross_site_writes(self):
         with patch.object(server, "AUTH_USER", "team"), patch.object(server, "AUTH_PASSWORD", "secret"):

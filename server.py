@@ -12,6 +12,7 @@ import os
 import base64
 import binascii
 import hmac
+import secrets
 import sqlite3
 import threading
 import time
@@ -21,6 +22,7 @@ import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from http.cookies import SimpleCookie
 import provider_search
 
 
@@ -32,6 +34,10 @@ PORT = int(os.environ.get("VOXEL1_PORT", os.environ.get("PORT", "8001")))
 AUTH_USER = os.environ.get("VOXEL1_AUTH_USER", "")
 AUTH_PASSWORD = os.environ.get("VOXEL1_AUTH_PASSWORD", "")
 PUBLIC_NO_AUTH = os.environ.get("VOXEL1_PUBLIC_NO_AUTH", "") == "1"
+SESSION_SECONDS = 8 * 60 * 60
+sessions: dict[str, float] = {}
+failed_logins: dict[str, list[float]] = {}
+session_lock = threading.Lock()
 USER_AGENT = "Voxel1ProspectingPrototype/0.1 (local internal research)"
 OVERPASS = "https://overpass-api.de/api/interpreter"
 OVERPASS_BACKUP = "https://overpass.private.coffee/api/interpreter"
@@ -307,12 +313,33 @@ class Handler(BaseHTTPRequestHandler):
                 return True
         except (ValueError, UnicodeError, binascii.Error):
             pass
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="Voxel1 private demo"')
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+            token = cookie["voxel1_session"].value if "voxel1_session" in cookie else ""
+        except Exception:
+            token = ""
+        with session_lock:
+            expires = sessions.get(token, 0) if token else 0
+            if expires > time.time():
+                return True
+            if token:
+                sessions.pop(token, None)
+        if not urllib.parse.urlparse(self.path).path.startswith("/api/"):
+            self.send_response(302)
+            self.send_header("Location", "/login")
+        else:
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", "0")
         self.end_headers()
         return False
+
+    def session_cookie(self, token: str, max_age: int) -> str:
+        host = self.headers.get("Host", "")
+        secure = self.headers.get("X-Forwarded-Proto", "").lower() == "https" or not host.startswith(("localhost", "127.0.0.1"))
+        return f"voxel1_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}" + ("; Secure" if secure else "")
 
     def same_origin_write(self) -> bool:
         # Reject browser-initiated cross-site writes, including a form POST.
@@ -349,9 +376,18 @@ class Handler(BaseHTTPRequestHandler):
         return parts[2]
 
     def do_GET(self) -> None:
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/login":
+            body = (ROOT / "web" / "login.html").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if not self.authorized():
             return
-        path = urllib.parse.urlparse(self.path).path
         if path == "/" or path in ("/app.js", "/style.css", "/extra.css"):
             filename = "index.html" if path == "/" else path[1:]
             mime = "text/html" if filename.endswith(".html") else "text/javascript" if filename.endswith(".js") else "text/css"
@@ -395,6 +431,43 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(400, {"error": str(exc)})
 
     def do_POST(self) -> None:
+        if urllib.parse.urlparse(self.path).path == "/api/login":
+            if not self.same_origin_write():
+                return
+            remote = getattr(self, "client_address", ("unknown",))[0]
+            with session_lock:
+                recent = [attempt for attempt in failed_logins.get(remote, []) if time.time() - attempt < 60]
+                failed_logins[remote] = recent
+                if len(recent) >= 5:
+                    return self.respond(429, {"error": "Too many sign-in attempts. Try again in a minute."})
+            try:
+                payload = self.read_json()
+                user = str(payload.get("username", ""))
+                password = str(payload.get("password", ""))
+            except (ValueError, json.JSONDecodeError):
+                return self.respond(400, {"error": "Enter username and password."})
+            if not AUTH_USER or not AUTH_PASSWORD or not (hmac.compare_digest(user, AUTH_USER) and hmac.compare_digest(password, AUTH_PASSWORD)):
+                with session_lock:
+                    failed_logins.setdefault(remote, []).append(time.time())
+                return self.respond(401, {"error": "Invalid username or password."})
+            token = secrets.token_urlsafe(32)
+            with session_lock:
+                failed_logins.pop(remote, None)
+                expired = [key for key, expiry in sessions.items() if expiry <= time.time()]
+                for key in expired:
+                    sessions.pop(key, None)
+                if len(sessions) >= 100:
+                    sessions.clear()
+                sessions[token] = time.time() + SESSION_SECONDS
+            body = b'{"ok":true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Set-Cookie", self.session_cookie(token, SESSION_SECONDS))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if not self.authorized() or not self.same_origin_write():
             return
         parts = urllib.parse.urlparse(self.path).path.strip("/").split("/")

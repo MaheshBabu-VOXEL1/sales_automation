@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in | Voxel1 Prospect Desk</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #182846; background: #f5f7fb; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 20px; }
+    main { width: min(100%, 400px); background: white; border: 1px solid #dce5f2; border-radius: 18px; padding: 32px; box-shadow: 0 18px 48px #15243b12; }
+    h1 { font-size: 25px; margin: 0 0 8px; }
+    p { color: #64748b; margin: 0 0 25px; font-size: 14px; }
+    label { display: block; font-weight: 700; font-size: 13px; margin: 18px 0 7px; }
+    input { width: 100%; border: 1px solid #cad6e6; border-radius: 9px; padding: 12px; font: inherit; }
+    button { width: 100%; margin-top: 24px; border: 0; border-radius: 9px; background: #235de8; color: white; padding: 13px; font: inherit; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    #error { color: #b42318; min-height: 20px; margin: 12px 0 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Voxel1 Prospect Desk</h1>
+    <p>Sign in with the credentials configured in Render.</p>
+    <form id="login">
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required autofocus>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+      <div id="error" role="alert"></div>
+    </form>
+  </main>
+  <script>
+    document.querySelector("#login").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector("button");
+      const error = document.querySelector("#error");
+      button.disabled = true;
+      error.textContent = "";
+      try {
+        const response = await fetch("/api/login", {
+          method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({username: form.elements.namedItem("username").value, password: form.elements.namedItem("password").value})
+        });
+        if (!response.ok) {
+          const result = await response.json();
+          throw new Error(result.error || "Could not sign in.");
+        }
+        location.replace("/");
+      } catch (cause) {
+        error.textContent = cause.message;
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
