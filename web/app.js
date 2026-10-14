@@ -1,6 +1,7 @@
 const state = { service: null, icp: null, compatibleBackend: true, leads: [], filter: "all" };
 const countries = [["US", "USA"], ["AE", "UAE"], ["SA", "Saudi Arabia"], ["IN", "India"], ["SG", "Singapore"]];
 const countryCode = (name) => countries.find((item) => item[1] === name)?.[0] || null;
+const leadCountry = (lead) => lead.country || (lead.source_id?.startsWith("apollo/") && state.icp?.countries?.length === 1 ? state.icp.countries[0] : "");
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const safeUrl = (value) => { try { const u = new URL(value); return ["https:", "http:"].includes(u.protocol) ? u.href : null; } catch { return null; } };
@@ -91,7 +92,7 @@ function renderLeads() {
   $("#stat-contact").textContent = leads.filter((lead) => lead.email || lead.phone).length;
   $("#stat-interested").textContent = leads.filter((lead) => lead.status === "interested").length;
   $("#stat-not").textContent = leads.filter((lead) => lead.status === "not_interested").length;
-  $("#country-summary").innerHTML = (state.icp?.countries || []).map((name) => `<span><strong>${esc(name)}</strong><small>${leads.filter((lead) => lead.country?.toLowerCase() === name.toLowerCase() || lead.country === countryCode(name)).length} companies</small></span>`).join("");
+  $("#country-summary").innerHTML = (state.icp?.countries || []).map((name) => `<span><strong>${esc(name)}</strong><small>${leads.filter((lead) => leadCountry(lead).toLowerCase() === name.toLowerCase() || leadCountry(lead) === countryCode(name)).length} companies</small></span>`).join("");
   const text = $("#lead-search").value.trim().toLowerCase();
   const visible = leads.filter((lead) => (state.filter === "all" || lead.status === state.filter) && lead.company.toLowerCase().includes(text));
   $("#empty").classList.toggle("hidden", visible.length > 0);
@@ -102,7 +103,7 @@ function renderLeads() {
     const email = lead.email ? `<span class="contact-line"><a href="mailto:${encodeURIComponent(lead.email)}">${esc(lead.email)}</a></span>` : "";
     const phone = lead.phone ? `<span class="contact-line"><a href="tel:${encodeURIComponent(lead.phone)}">${esc(lead.phone)}</a></span>` : "";
     const contact = `${lead.contact_name ? `<strong>${esc(lead.contact_name)}</strong><small>${esc(lead.contact_title)}</small>` : ""}${email}${phone}` || "<small>No contact found</small>";
-    return `<tr><td data-label="Company"><strong>${esc(lead.company)}</strong><small>${esc(lead.category)}</small>${web ? `<div><a class="source-link" href="${esc(web)}" target="_blank" rel="noopener noreferrer">Website ↗</a></div>` : ""}</td><td data-label="Location">${esc(lead.city)}<br><small>${esc(lead.country)}</small></td><td data-label="Public contact">${contact}</td><td data-label="Interest status"><select class="status-select ${esc(lead.status)}" data-id="${lead.id}" aria-label="Interest status for ${esc(lead.company)}"><option value="new" ${lead.status === "new" ? "selected" : ""}>Unreviewed</option><option value="interested" ${lead.status === "interested" ? "selected" : ""}>Interested</option><option value="not_interested" ${lead.status === "not_interested" ? "selected" : ""}>Not interested</option></select>${lead.notes ? `<small class="contact-line">${esc(lead.notes)}</small>` : ""}</td><td data-label="Source">${source ? `<a class="source-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">Source ↗</a>` : "—"}</td></tr>`;
+    return `<tr><td data-label="Company"><strong>${esc(lead.company)}</strong><small>${esc(lead.category)}</small>${web ? `<div><a class="source-link" href="${esc(web)}" target="_blank" rel="noopener noreferrer">Website ↗</a></div>` : ""}</td><td data-label="Location">${esc(lead.city)}<br><small>${esc(leadCountry(lead))}</small></td><td data-label="Public contact">${contact}</td><td data-label="Interest status"><select class="status-select ${esc(lead.status)}" data-id="${lead.id}" aria-label="Interest status for ${esc(lead.company)}"><option value="new" ${lead.status === "new" ? "selected" : ""}>Unreviewed</option><option value="interested" ${lead.status === "interested" ? "selected" : ""}>Interested</option><option value="not_interested" ${lead.status === "not_interested" ? "selected" : ""}>Not interested</option></select>${lead.notes ? `<small class="contact-line">${esc(lead.notes)}</small>` : ""}</td><td data-label="Source">${source ? `<a class="source-link" href="${esc(source)}" target="_blank" rel="noopener noreferrer">Source ↗</a>` : "—"}</td></tr>`;
   }).join("");
 }
 
