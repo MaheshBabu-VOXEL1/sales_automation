@@ -2,78 +2,63 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Voxel1 | Prospect Desk</title>
-  <link rel="stylesheet" href="/style.css">
-  <link rel="stylesheet" href="/extra.css?v=5">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Voxel1 | Growth Engine</title>
+  <script>try { const t = localStorage.getItem("voxel1-theme"); if (t === "dark" || t === "light") document.documentElement.dataset.theme = t; } catch (e) {}</script>
+  <link rel="stylesheet" href="/style.css?v=13">
+  <link rel="stylesheet" href="/extra.css?v=13">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand"><span class="brand-mark">V</span><span>VOXEL1 <small>Prospect Desk</small></span></div>
-    <span class="top-note">Internal research workspace</span>
-  </header>
-  <main class="shell">
-    <section id="home" class="home">
-      <div class="eyebrow">SALES WORKSPACE</div>
-      <h1>Choose a service to get started.</h1>
-      <p class="intro">Keep Training and BIM Services prospects in their own simple pipelines.</p>
-      <div class="service-grid">
-        <button class="service-card" data-service="training">
-          <span class="card-icon training-icon">T</span>
-          <span class="card-copy"><strong>Training</strong><small>Find companies for BIM training and track their response.</small></span>
-          <span class="arrow">↗</span>
-        </button>
-        <button class="service-card" data-service="bim">
-          <span class="card-icon bim-icon">B</span>
-          <span class="card-copy"><strong>BIM Services</strong><small>Find companies for BIM delivery and track their response.</small></span>
-          <span class="arrow">↗</span>
-        </button>
-      </div>
-      <div class="home-footnote">Public contact fields are shown only when available. Interest is recorded by your team after a real response.</div>
-    </section>
+  <header class="topbar"><div class="tb">
+    <div class="brand"><div class="logo">V</div>VOXEL1<i></i><span>Growth Engine</span></div>
+    <div class="tstats">
+      <span class="ts">Won / goal <b id="tot">—</b></span>
+      <button class="apbtn" id="approvals" type="button">Approvals <b>0</b></button>
+      <span class="ts"><span class="sdot" id="gdot"></span><span id="gstate">Loading…</span></span>
+      <button class="btn" id="theme" type="button">Dark mode</button>
+      <button class="btn" id="pause-all" type="button">Pause all</button>
+    </div>
+  </div></header>
 
-    <section id="workspace" class="workspace hidden">
-      <button id="back" class="back-button">← All services</button>
-      <div class="page-heading"><div><div class="eyebrow" id="service-eyebrow">SERVICE WORKSPACE</div><h1 id="service-title"></h1><p>Set your ideal customer profile, find companies and track interest.</p></div><span class="source-badge" id="source-badge">Company search</span></div>
+  <div class="shell">
+    <nav class="side" id="side" aria-label="Service workspaces"></nav>
+    <main class="main" id="main"><p class="note">Loading your workspace…</p></main>
+  </div>
 
-      <div class="section-head"><div><span class="step">01</span><h2>Ideal customer profile</h2></div><span class="hint">Saved separately for each product</span></div>
-      <form id="icp-form" class="panel icp-form">
-        <label class="field field-wide">ICP name<input name="name" maxlength="100" required></label>
-        <fieldset class="target-countries"><legend>Countries of focus for this product</legend><div class="checks"><label><input type="checkbox" name="countries" value="USA"> USA</label><label><input type="checkbox" name="countries" value="UAE"> UAE</label><label><input type="checkbox" name="countries" value="Saudi Arabia"> Saudi Arabia</label><label><input type="checkbox" name="countries" value="India"> India</label><label><input type="checkbox" name="countries" value="Singapore"> Singapore</label></div><label class="field custom-countries">Other countries <span class="optional">(comma-separated)</span><input name="other_countries" placeholder="e.g. Germany, Australia"></label><small id="country-search-hint">Choose the countries to search.</small></fieldset>
-        <fieldset class="industry-field"><legend>Target industries</legend><div class="checks"><label><input type="checkbox" name="categories" value="architecture"> Architecture</label><label><input type="checkbox" name="categories" value="construction"> Construction</label><label><input type="checkbox" name="categories" value="engineering"> Engineering</label><label><input type="checkbox" name="categories" value="real_estate"> Real estate</label><label><input type="checkbox" name="categories" value="education"> Education</label></div></fieldset>
-        <label class="field">Company size: minimum employees<input name="employee_min" type="number" min="1" max="1000000" placeholder="Any size"></label>
-        <label class="field">Company size: maximum employees<input name="employee_max" type="number" min="1" max="1000000" placeholder="Any size"></label>
-        <label class="field field-full">Decision-maker titles <span class="optional">(comma-separated)</span><input name="titles" maxlength="500" placeholder="e.g. BIM Manager, Project Manager, Director"></label>
-        <label class="field">Positive keywords<input name="keywords" maxlength="500" placeholder="e.g. Revit, infrastructure"></label>
-        <label class="field">Exclude keywords / industries<input name="exclusions" maxlength="500" placeholder="e.g. residential-only"></label>
-        <label class="field field-full">Campaign goal<input name="goal" maxlength="500" placeholder="e.g. Book a discovery meeting"></label>
-        <label class="field field-full">Notes <span class="optional">(for your team; not used as a search filter yet)</span><textarea name="notes" maxlength="500" rows="2" placeholder="What makes a good customer for this service?"></textarea></label>
-        <div class="form-actions"><span id="icp-updated" class="muted">ICP saved</span><div><button type="submit" class="button secondary">Save ICP</button><button type="button" id="discover" class="button primary">Search companies</button></div></div>
-      </form>
-      <section id="budget" class="panel budget-panel hidden" aria-label="Monthly search budget"></section>
-      <p id="message" class="message hidden" role="status"></p>
+  <div id="notice" class="notice" role="status" hidden></div>
 
-      <div class="section-head leads-heading"><div><span class="step">02</span><h2>Candidate review</h2></div><span class="hint">Check company fit and contacts before outreach</span></div>
-      <div class="stats"><div><strong id="stat-total">0</strong><span id="stat-total-label">Active candidates</span></div><div><strong id="stat-contact">0</strong><span>With email or phone</span></div><div><strong id="stat-interested">0</strong><span>Interested</span></div><div><strong id="stat-not">0</strong><span>Not interested</span></div></div>
-      <div id="country-summary" class="country-summary" aria-label="Results by country"></div>
-      <div class="table-panel">
-        <div class="table-toolbar"><div class="tabs" role="group" aria-label="Filter companies"><button data-filter="all" class="active">All</button><button data-filter="ai_screened">Gemini-screened</button><button data-filter="new">Unreviewed</button><button data-filter="interested">Interested</button><button data-filter="not_interested">Not interested</button><button data-filter="excluded">Rejected / archived</button></div><input id="lead-search" type="search" placeholder="Find a company" aria-label="Find a company"></div>
-        <div class="table-scroll"><table><thead><tr><th>Company</th><th>Why listed</th><th>Location</th><th>Contact</th><th>Review / interest</th><th>Source</th></tr></thead><tbody id="lead-rows"></tbody></table></div>
-        <div id="empty" class="empty">No companies yet. Set your ICP and choose “Search selected countries.”</div>
-      </div>
-      <p class="disclaimer" id="search-disclaimer">Older saved candidates have no recorded Gemini screening status. A Gemini-screened result is a plausible buyer, not a confirmed training or BIM services customer. No messages are sent automatically.</p>
-    </section>
-  </main>
-  <dialog id="review-dialog" class="review-dialog">
-    <form id="review-form" method="dialog">
-      <h3 id="review-title">Reject company</h3>
-      <p id="review-help" class="muted"></p>
-      <label class="field">Reason<select name="reason" required></select></label>
-      <label class="field">Note <span class="optional">(required for Other)</span><textarea name="note" maxlength="500" rows="3"></textarea></label>
-      <p id="review-error" class="message error hidden" role="alert"></p>
-      <div class="dialog-actions"><button type="button" id="review-cancel" class="button secondary">Cancel</button><button type="submit" id="review-submit" class="button primary">Reject</button></div>
+  <dialog id="editor" class="sheet" aria-labelledby="editor-title">
+    <form id="editor-form" novalidate>
+      <div class="dialog-head"><h2 id="editor-title">Edit</h2><button type="button" class="btn" data-close="editor">Close</button></div>
+      <p id="editor-help" class="note"></p>
+      <div id="editor-fields" class="form-grid"></div>
+      <p id="editor-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="btn" data-close="editor">Cancel</button><button class="btn pri" type="submit" id="editor-submit">Save</button></div>
     </form>
   </dialog>
-  <script src="/app.js?v=12" defer></script>
+
+  <dialog id="icp-dialog" class="sheet wide" aria-labelledby="icp-title">
+    <form id="icp-form" novalidate>
+      <div class="dialog-head"><h2 id="icp-title">Targeting (ideal customer profile)</h2><button type="button" class="btn" data-close="icp-dialog">Close</button></div>
+      <p class="note" id="icp-help">Saved separately for each service. Saving does not run a search.</p>
+      <div class="form-grid">
+        <label class="field full"><span class="flabel">Profile name</span><input name="name" maxlength="100" required></label>
+        <fieldset class="field full"><legend>Countries of focus</legend><div class="checks"><label><input type="checkbox" name="countries" value="USA"> USA</label><label><input type="checkbox" name="countries" value="UAE"> UAE</label><label><input type="checkbox" name="countries" value="Saudi Arabia"> Saudi Arabia</label><label><input type="checkbox" name="countries" value="India"> India</label><label><input type="checkbox" name="countries" value="Singapore"> Singapore</label></div></fieldset>
+        <label class="field full"><span class="flabel">Other countries <span class="optional">(comma-separated)</span></span><input name="other_countries" placeholder="e.g. Germany, Australia"></label>
+        <fieldset class="field full"><legend>Target industries</legend><div class="checks"><label><input type="checkbox" name="categories" value="architecture"> Architecture</label><label><input type="checkbox" name="categories" value="construction"> Construction</label><label><input type="checkbox" name="categories" value="engineering"> Engineering</label><label><input type="checkbox" name="categories" value="real_estate"> Real estate</label><label><input type="checkbox" name="categories" value="education"> Education</label></div></fieldset>
+        <label class="field"><span class="flabel">Minimum employees</span><input name="employee_min" type="number" min="1" max="1000000" placeholder="Any size"></label>
+        <label class="field"><span class="flabel">Maximum employees</span><input name="employee_max" type="number" min="1" max="1000000" placeholder="Any size"></label>
+        <label class="field full"><span class="flabel">Decision-maker titles <span class="optional">(comma-separated)</span></span><input name="titles" maxlength="500" placeholder="e.g. BIM Manager, Project Manager, Director"></label>
+        <label class="field"><span class="flabel">Positive keywords</span><input name="keywords" maxlength="500" placeholder="e.g. Revit, infrastructure"></label>
+        <label class="field"><span class="flabel">Exclude keywords</span><input name="exclusions" maxlength="500" placeholder="e.g. residential-only"></label>
+        <label class="field full"><span class="flabel">Campaign goal</span><input name="goal" maxlength="500" placeholder="e.g. Book a discovery meeting"></label>
+        <label class="field full"><span class="flabel">Notes <span class="optional">(for your team; not a search filter)</span></span><textarea name="notes" maxlength="500" rows="2"></textarea></label>
+      </div>
+      <p id="icp-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions"><span id="icp-updated" class="note"></span><button type="button" class="btn" data-close="icp-dialog">Cancel</button><button class="btn pri" type="submit">Save targeting</button></div>
+    </form>
+  </dialog>
+
+  <script src="/app.js?v=13" defer></script>
 </body>
 </html>

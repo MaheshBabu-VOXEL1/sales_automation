@@ -1,100 +1,98 @@
-.target-countries { grid-column: 1 / -1; border: 0; margin: 0; padding: 0; }
-.target-countries legend { color: #526178; font-size: 12px; font-weight: 700; padding: 0 0 9px; }
-.custom-countries { margin-top: 12px; max-width: 540px; }
-.field-title { display: block; color: #526178; font-size: 12px; font-weight: 700; margin-bottom: 9px; }
-.country-list { display: flex; gap: 8px; flex-wrap: wrap; }
-.country-list span { border: 1px solid #dbe6f5; background: #f6f9ff; border-radius: 8px; padding: 8px 10px; color: #415c83; font-size: 12px; font-weight: 700; }
-.target-countries small { display: block; color: #9aa6b5; margin-top: 9px; font-size: 11px; }
-.country-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 8px; margin-bottom: 17px; }
-.country-summary > span { display: flex; justify-content: space-between; gap: 6px; align-items: center; padding: 10px 12px; border: 1px solid #e1e8f1; background: #fff; border-radius: 9px; font-size: 11px; }
-.country-summary strong { color: #3f536d; }
-.country-summary small { color: #8695a7; white-space: nowrap; }
-.budget-panel { margin-top: 12px; padding: 14px 16px; font-size: 12px; color: #415c83; }
-.budget-panel h3 { margin: 0 0 9px; font-size: 13px; color: #15243b; }
-.budget-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
-.budget-grid > div { border: 1px solid #e1e8f1; border-radius: 9px; padding: 9px 11px; background: #f9fbfe; }
-.budget-grid strong { display: block; font-size: 12px; color: #3f536d; }
-.budget-grid small { display: block; color: #8695a7; margin-top: 3px; line-height: 1.4; }
-.budget-panel .budget-note { margin: 9px 0 0; color: #8692a3; line-height: 1.5; }
-.budget-panel .budget-blocked { margin: 9px 0 0; padding: 9px 11px; border-radius: 8px; background: #fff0ee; color: #ad4233; line-height: 1.5; }
-/* Keep each contact fact on its own line so labels do not run together. */
-td[data-label="Contact"] small, .contact-line small { display: block; line-height: 1.45; }
-.why-listed small { display: block; line-height: 1.45; }
-.why-listed .ai-line { margin-top: 5px; color: #415c83; }
-.review-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
-.link-button { border: 1px solid #cedbf1; background: #fff; color: #2854aa; border-radius: 7px; padding: 5px 9px; font-size: 11px; font-weight: 700; cursor: pointer; }
-.link-button:hover { background: #f5f8ff; }
-.link-button.danger { color: #ad4233; border-color: #f0cfc9; }
-.excluded-badge { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #fff0ee; color: #ad4233; font-size: 11px; font-weight: 700; }
-.excluded-badge.archived { background: #f1f4f8; color: #526178; }
-.history-row td { background: #f9fbfe; }
-.history-list { margin: 0; padding-left: 18px; font-size: 12px; color: #415c83; line-height: 1.6; }
-.review-dialog { border: 1px solid #e1e8f1; border-radius: 14px; padding: 20px; width: min(440px, calc(100vw - 32px)); box-shadow: 0 20px 50px rgba(20, 46, 83, .18); }
-.review-dialog::backdrop { background: rgba(21, 36, 59, .35); }
-.review-dialog h3 { margin: 0 0 6px; font-size: 16px; }
-.review-dialog .field { display: block; margin-top: 12px; }
-.review-dialog select, .review-dialog textarea { width: 100%; box-sizing: border-box; margin-top: 6px; font: inherit; padding: 8px; border: 1px solid #d5dfeb; border-radius: 8px; }
-.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-@media (min-width: 641px) {
-  table { min-width: 1040px; }
-  th:nth-child(2), td:nth-child(2) { min-width: 225px; }
-}
-@media (max-width: 760px) { .country-summary { grid-template-columns: repeat(2, 1fr); } }
+/* Growth Engine additions on top of the reference stylesheet (style.css). Colours come from its tokens so dark mode follows. */
+body.busy { cursor: progress; }
+body.busy .btn, body.busy .fchip { pointer-events: none; opacity: .7; }
+.strong { font-weight: 600; }
+.title-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.panel-h .actions, .ph-r { margin-top: 0; }
+.actions.end { justify-content: flex-end; }
+.actions .btn { height: 30px; padding: 0 12px; font-size: 12.5px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.linkish { all: unset; cursor: pointer; color: var(--link); font-weight: 500; }
+.linkish:focus-visible { outline: 2px solid var(--focus); }
+.empty-cell { text-align: center; color: var(--muted); padding: 28px 16px !important; }
+.panel-f { padding: 12px 22px 16px; border-top: 1px solid var(--line); }
+.ty.plain { background: var(--soft); color: var(--fg); }
+.av.sm { width: 22px; height: 22px; font-size: 9px; }
+.kpis.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.search { height: 34px; min-width: 220px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line2); background: var(--surface); color: var(--fg); font: inherit; font-size: 13px; }
+.why { max-width: 300px; font-size: 13px; color: var(--muted); }
+.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.stage-l { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.room-title { font-size: 18px; margin-top: 2px; }
+.inline-stat { display: flex; flex-wrap: wrap; gap: 24px; align-items: center; }
+.inline-stat .note { max-width: 70ch; }
+.big { font-size: 22px; font-weight: 600; }
+.facts { display: flex; flex-direction: column; gap: 14px; font-size: 13px; }
+.facts p { margin: 3px 0 0; line-height: 1.5; overflow-wrap: anywhere; }
+.facts a { color: var(--link); text-decoration: none; }
+.facts a:hover { text-decoration: underline; }
+.facts select { display: block; margin-top: 6px; }
 
-/* Phone layout: keep the ICP usable and present each lead without a wide table. */
-@media (max-width: 640px) {
-  .topbar { height: 64px; padding: 0 16px; }
-  .shell { min-width: 0; padding: 0 16px 48px; }
-  .home { margin-top: 48px; }
-  .home h1, .page-heading h1 { font-size: clamp(29px, 9vw, 38px); }
-  .service-grid { gap: 13px; margin-top: 28px; }
-  .service-card { min-height: 126px; padding: 20px 16px; gap: 14px; }
-  .card-icon { width: 43px; height: 43px; font-size: 20px; }
-  .card-copy strong { font-size: 18px; }
-  .card-copy small { font-size: 13px; }
-  .workspace { padding-top: 22px; }
-  .page-heading { display: block; margin: 22px 0 32px; }
-  .page-heading p { font-size: 14px; line-height: 1.5; }
-  .source-badge { display: inline-flex; margin-top: 16px; white-space: normal; }
-  .section-head { align-items: flex-start; flex-direction: column; gap: 5px; }
-  .section-head h2 { font-size: 17px; }
-  .section-head .hint { margin-left: 41px; }
-  .icp-form { min-width: 0; padding: 16px; gap: 18px; }
-  .icp-form > *, .field { min-width: 0; }
-  .checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .checks label { min-width: 0; min-height: 44px; padding: 8px; line-height: 1.25; }
-  .checks input { flex: none; }
-  .custom-countries { max-width: none; }
-  .field input, .field select, .field textarea, #lead-search { font-size: 16px; }
-  .button { min-height: 44px; }
-  .form-actions { align-items: stretch; }
-  .form-actions > div { display: grid; grid-template-columns: 1fr; }
-  .form-actions .button { width: 100%; }
-  .stats { gap: 8px; }
-  .stats > div { min-width: 0; padding: 14px; }
-  .stats span { line-height: 1.35; }
-  .table-toolbar { padding: 12px; }
-  .tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 6px; }
-  .tabs button { min-height: 42px; padding: 8px; text-align: center; }
-  #lead-search { min-height: 44px; }
-  .table-scroll { overflow: visible; }
-  table, tbody, tr, td { display: block; width: 100%; min-width: 0; }
-  thead { display: none; }
-  tbody { padding: 12px; }
-  tr { border: 1px solid #e1e8f1; border-radius: 12px; overflow: hidden; margin-bottom: 12px; background: #fff; }
-  tr:last-child { margin-bottom: 0; }
-  td { display: block; padding: 11px 12px; border-top: 1px solid #edf1f5; overflow-wrap: anywhere; }
-  td:first-child { border-top: 0; }
-  td::before { content: attr(data-label); display: block; margin-bottom: 5px; color: #8793a4; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
-  td strong, td small, td .contact-line, td > div { min-width: 0; }
-  td strong { font-size: 14px; margin-bottom: 3px; }
-  td .contact-line { overflow-wrap: anywhere; }
-  .status-select { width: 100%; max-width: none; min-height: 42px; font-size: 14px; }
-  .empty { padding: 32px 16px; }
+/* Stage stepper buttons */
+.stepper button { all: unset; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--faint); padding: 2px 0; border-radius: 6px; }
+.stepper button:hover span { color: var(--fg); }
+.stepper button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.stepper button i { height: 6px; border-radius: 999px; background: var(--soft2); }
+.stepper button.on i { background: var(--navy); }
+.stepper button.won i { background: var(--ok); }
+.stepper button.on { color: var(--muted); }
+.stepper button.cur { font-weight: 600; color: var(--fg); }
+.ns .st { margin-left: 6px; vertical-align: middle; }
+
+/* Budget */
+.budget { display: flex; flex-direction: column; gap: 10px; }
+.bgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+.bcard { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.bcard span { font-size: 12px; color: var(--muted); }
+.bcard b { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bcard b small { font-size: 13px; color: var(--faint); font-weight: 500; }
+.blocked { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg); color: var(--warn); font-size: 13px; line-height: 1.5; }
+
+/* Toast */
+.notice { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 50; max-width: min(640px, calc(100vw - 32px)); padding: 12px 16px; border-radius: 12px; background: var(--navy); color: var(--navy-fg); font-size: 13.5px; line-height: 1.5; box-shadow: 0 10px 30px rgba(0, 0, 0, .18); }
+.notice.error { background: #B42318; color: #fff; }
+
+/* Dialogs and forms */
+dialog.sheet { border: 1px solid var(--line); border-radius: 16px; padding: 0; width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 48px); background: var(--surface); color: var(--fg); box-shadow: 0 24px 60px rgba(0, 0, 0, .22); }
+dialog.sheet.wide { width: min(760px, calc(100vw - 32px)); }
+dialog.sheet::backdrop { background: rgba(13, 23, 38, .45); }
+dialog.sheet form { padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; }
+.dialog-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.dialog-head h2 { font-size: 18px; }
+.dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.dialog-actions .note { margin-right: auto; font-size: 12px; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--muted); min-width: 0; border: 0; margin: 0; padding: 0; }
+.field.full, .form-grid > .full { grid-column: 1 / -1; }
+.field legend { padding: 0 0 6px; }
+.optional { font-weight: 400; color: var(--faint); }
+.field input, .field select, .field textarea, .facts select { font: inherit; font-size: 14px; color: var(--fg); background: var(--surface); border: 1px solid var(--line2); border-radius: 10px; padding: 8px 11px; min-height: 38px; width: 100%; }
+.field textarea { resize: vertical; line-height: 1.5; }
+.field input:focus, .field select:focus, .field textarea:focus, .search:focus, .facts select:focus { outline: 2px solid var(--focus); outline-offset: 0; border-color: transparent; }
+.checks { display: flex; flex-wrap: wrap; gap: 8px; }
+.checks label { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border-radius: 999px; background: var(--soft); color: var(--fg); font-size: 13px; cursor: pointer; }
+.checks input { accent-color: var(--navy); }
+.form-error { margin: 0; padding: 10px 12px; border-radius: 10px; background: #FDECEA; color: #B42318; font-size: 13px; }
+
+@media (max-width: 1080px) {
+  /* Two header buttons do not fit over the title as in the reference; give them their own row. */
+  .ph-r { position: static !important; flex: 1 1 100%; flex-wrap: wrap; }
+  .ph-l h1 { padding-right: 0 !important; }
+  .kpis.four { display: flex !important; }
+  .search { min-width: 0; width: 100%; }
+  .panel-h > .search { flex: 1 1 100%; }
+  .why { max-width: none; }
+  .panel-f { padding: 12px 16px 14px; }
+  .actions .btn { height: 34px; }
+}
+@media (max-width: 560px) {
+  /* The top bar wraps to two rows here, so the service switcher scrolls with the page instead of sliding under it. */
+  .side { position: static !important; }
+  .form-grid { grid-template-columns: 1fr; }
+  dialog.sheet form { padding: 16px; }
 }
 
-@media (max-width: 380px) {
-  .country-summary { grid-template-columns: 1fr; }
-  .service-card { gap: 11px; }
-  .arrow { font-size: 18px; }
-}
+/* Keep the approvals count readable when the button is selected, in both themes. */
+.apbtn.on b { background: var(--navy-fg); color: var(--navy); }
+.apbtn.on.warn b { background: #CC0000; color: #fff; }
