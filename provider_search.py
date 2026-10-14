@@ -93,17 +93,18 @@ def discover(icp, service):
                       "website": website, "source_url": website,
                       "contact_name": "", "contact_title": "",
                       "evidence_url": ""})
-    if found:
+    for lead in found:
         try:
             people = request_json(APOLLO + "/mixed_people/api_search", "x-api-key", apollo_key,
-                                  {"organization_ids[]": [item["source_id"].split("/", 1)[1] for item in found],
-                                   "person_titles[]": titles[:8], "per_page": 100, "page": 1})
-            by_org = {item["source_id"].split("/", 1)[1]: item for item in found}
-            for person in people.get("people", []):
-                lead = by_org.get(str(person.get("organization_id") or (person.get("organization") or {}).get("id")))
-                if lead and not lead["contact_name"]:
-                    lead["contact_name"] = str(person.get("name") or " ".join(str(person.get(key) or "") for key in ("first_name", "last_name")).strip())[:200]
-                    lead["contact_title"] = str(person.get("title") or "")[:200]
+                                  {"organization_ids[]": [lead["source_id"].split("/", 1)[1]],
+                                   "person_titles[]": titles[:8], "per_page": 3, "page": 1})
+            matches = people.get("people", [])
+            if matches:
+                person = matches[0]
+                first = str(person.get("first_name") or "").strip()
+                last = str(person.get("last_name") or person.get("last_name_obfuscated") or "").strip()
+                lead["contact_name"] = str(person.get("name") or " ".join(part for part in (first, last) if part))[:200]
+                lead["contact_title"] = str(person.get("title") or "")[:200]
         except ProviderError as exc:
             warnings.append(str(exc))
     return {"companies": found, "coverage": [{"country": name, "city": None, "found": sum(c["country"].casefold() == name.casefold() for c in found)} for name in countries],
