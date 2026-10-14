@@ -11,7 +11,7 @@ import re
 import urllib.error
 import urllib.request
 
-from provider_search import GEMINI, ProviderError
+from provider_search import GEMINI, ProviderError, gemini_failure
 
 PURPOSES = ("First contact", "Follow-up")
 OFFER = {
@@ -79,7 +79,7 @@ def write_draft(lead, service, purpose, room_notes="", history=(), guidance=""):
         + (f"Team guidance (follow it unless it breaks the rules above): {guidance}\n" if guidance else "")
         + json.dumps(facts, ensure_ascii=False))
     request = {"contents": [{"parts": [{"text": instruction}]}],
-               "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": 1200}}
+               "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": 1200, "thinkingConfig": {"thinkingBudget": 0}}}
     req = urllib.request.Request(GEMINI + model + ":generateContent", data=json.dumps(request).encode(),
                                  headers={"x-goog-api-key": api_key, "Content-Type": "application/json"}, method="POST")
     try:
@@ -88,7 +88,7 @@ def write_draft(lead, service, purpose, room_notes="", history=(), guidance=""):
         answer = json.loads(payload["candidates"][0]["content"]["parts"][0]["text"])
         subject, body = str(answer["subject"]).strip(), str(answer["body"]).strip()
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError) as exc:
-        raise ProviderError("Gemini could not write a draft; nothing was saved. Check its API key, model and quota.") from exc
+        raise ProviderError(f"Gemini could not write a draft ({gemini_failure(exc)}); nothing was saved.") from exc
     if not subject or not body:
         raise ProviderError("Gemini returned an empty draft; nothing was saved.")
     broken = check_rules(subject, body)
