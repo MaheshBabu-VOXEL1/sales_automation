@@ -8,7 +8,7 @@ import urllib.request
 
 APOLLO = "https://api.apollo.io/api/v1"
 BRAVE = "https://api.search.brave.com/res/v1/web/search"
-LIMIT = 10  # At most ten companies, ten Brave lookups and ten people lookups per click.
+LIMIT = 10  # At most ten companies, ten Brave lookups and one people lookup per click.
 DEFAULT_TITLES = {
     "training": ("BIM Manager", "Learning and Development Manager", "Training Manager", "Technical Director"),
     "bim": ("BIM Manager", "Head of Design", "Technical Director", "Managing Director"),
@@ -85,13 +85,14 @@ def discover(icp, service):
             continue
         if not hits:
             continue  # Do not label a company relevant without a matching public page.
-        source_url = hits[0].get("url", website)
+        # Brave results are used only in memory for qualification. Its Search
+        # API terms do not permit retaining response data in our database.
         found.append({"source_id": "apollo/" + str(org["id"]), "company": str(org["name"])[:200],
                       "category": str(org.get("industry") or "business")[:100], "city": str(org.get("city") or "")[:100],
                       "country": str(org.get("country") or "")[:100], "email": None, "phone": None,
-                      "website": website, "source_url": source_url[:500],
+                      "website": website, "source_url": website,
                       "contact_name": "", "contact_title": "",
-                      "evidence_url": source_url[:500]})
+                      "evidence_url": ""})
     if found:
         try:
             people = request_json(APOLLO + "/mixed_people/api_search", "x-api-key", apollo_key,

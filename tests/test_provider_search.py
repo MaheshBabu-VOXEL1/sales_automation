@@ -33,7 +33,8 @@ class ProviderSearchTest(unittest.TestCase):
         self.assertEqual(result["source"], "Apollo + Brave")
         self.assertEqual(len(result["companies"]), 1)
         self.assertEqual(result["companies"][0]["contact_name"], "Alex")
-        self.assertEqual(result["companies"][0]["source_url"], "https://example.com/bim")
+        self.assertEqual(result["companies"][0]["source_url"], "https://example.com")
+        self.assertEqual(result["companies"][0]["evidence_url"], "")
         self.assertIsNone(result["companies"][0]["email"])
 
 
