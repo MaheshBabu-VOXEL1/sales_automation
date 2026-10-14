@@ -7,7 +7,8 @@ An internal sales workspace with two service pipelines: **Training** and **BIM S
 The interface follows the Voxel1 Growth Engine design (top bar, service sidebar, KPI cards, Daily rhythm, Leads, Content, Approvals and lead rooms), limited to Training and BIM Services. Every figure comes from saved data; nothing is simulated.
 
 - **Daily rhythm** lists tasks your team planned for today plus drafts waiting for approval. *Add suggested routine* creates that service's standard tasks for today as ordinary tasks owned by you. No scheduler or agent runs them.
-- **Leads** holds *Find companies* (targeting, manual *Add company*, budgeted *Search companies*) and the lead list with filters. Rejected and archived leads keep their history.
+- **Edit ICP** sits in every service workspace header, next to *Goal & strategy*, and opens that service's ICP (countries, industries, company size, titles, keywords, exclusions, goal, notes). Saving it never runs a search.
+- **Leads** holds *Find companies* (*Edit ICP*, manual *Add company*, budgeted *Search companies*) and the lead list with filters. Rejected and archived leads keep their history.
 - **Lead room** sets the sales stage (New → Won, or Lost), owner and a private room outline, and plans linked tasks and message drafts. It also shows why the lead is listed, its source, contacts, interest and review, and its full history. Rooms are internal: no client page is shared and no opens are tracked.
 - **Content** plans drafts by channel and purpose. Reach, enquiries and meetings are not measured, because no social, email or analytics account is connected.
 - **Approvals** lists pending content and message drafts across both services, with priority, service and type filters. **Approving never sends or posts anything.** Copy or download the approved text, send or post it yourself, then use *Record as sent/posted*. Editing a draft returns it to *Needs approval*.

@@ -198,7 +198,7 @@ function header(s) {
   return `<div class="crumb">Growth Engine <span>/</span> ${S.lead ? `<button type="button" data-act="back">${esc(s.name)}</button> <span>/</span> Lead room` : esc(s.name)}</div>
   <div class="ph">
     <div class="ph-l"><span class="av lg av-${s.id === "training" ? "train" : s.id}">${s.code}</span><div style="min-width:0"><div class="title-row"><h1>${esc(s.name)}</h1>${badge}</div><p>${esc(st.strategy || "No strategy written yet.")}</p></div></div>
-    <div class="ph-r"><button class="btn" type="button" data-act="edit-goal">Goal &amp; strategy</button><button class="btn" type="button" data-act="pause">${settings(s.id).paused ? "Resume workspace" : "Pause workspace"}</button></div>
+    <div class="ph-r"><button class="btn" type="button" data-act="icp">Edit ICP</button><button class="btn" type="button" data-act="edit-goal">Goal &amp; strategy</button><button class="btn" type="button" data-act="pause">${settings(s.id).paused ? "Resume workspace" : "Pause workspace"}</button></div>
   </div>
   <section class="kpis" aria-label="Key figures">
     <div class="kpi"><span>Sales goal</span><b>${won}<small> / ${goal}</small></b>${seg}</div>
@@ -271,8 +271,8 @@ function findPanel(s) {
   }
   const blocked = paused(s.id) || (provider && b && !b.allowed);
   return `<section class="panel">
-    <div class="panel-h"><div><h2>Find companies</h2><span class="note">${provider ? `Source: Apollo + Brave${icp.ai_qualification_enabled ? " + Gemini screening" : ""}. Up to 10 companies per search; you confirm the estimated requests first.` : "Source: OpenStreetMap city samples (no paid provider configured)."} Targeting: ${esc(icp.countries.join(", "))}.</span></div>
-      <div class="actions"><button class="btn" type="button" data-act="icp">Targeting</button><button class="btn" type="button" data-act="add-company">Add company</button><button class="btn pri" type="button" data-act="search" ${blocked ? "disabled" : ""}>Search companies</button></div></div>
+    <div class="panel-h"><div><h2>Find companies</h2><span class="note">${provider ? `Source: Apollo + Brave${icp.ai_qualification_enabled ? " + Gemini screening" : ""}. Up to 10 companies per search; you confirm the estimated requests first.` : "Source: OpenStreetMap city samples (no paid provider configured)."} ICP countries: ${esc(icp.countries.join(", "))}.</span></div>
+      <div class="actions"><button class="btn" type="button" data-act="icp">Edit ICP</button><button class="btn" type="button" data-act="add-company">Add company</button><button class="btn pri" type="button" data-act="search" ${blocked ? "disabled" : ""}>Search companies</button></div></div>
     ${budget ? `<div class="panel-b">${budget}</div>` : ""}
   </section>`;
 }
@@ -590,7 +590,7 @@ function openIcp() {
   const fixed = ["USA", "UAE", "Saudi Arabia", "India", "Singapore"];
   form.querySelectorAll('[name="countries"]').forEach((b) => { b.checked = icp.countries.includes(b.value); });
   form.elements.other_countries.value = icp.countries.filter((c) => !fixed.includes(c)).join(", ");
-  $("icp-title").textContent = `Targeting: ${svc(S.sel).name}`;
+  $("icp-title").textContent = `Edit ICP: ${svc(S.sel).name}`;
   $("icp-updated").textContent = icp.updated_at ? `Last saved ${new Date(icp.updated_at).toLocaleString()}` : "";
   $("icp-error").hidden = true;
   $("icp-dialog").showModal();
@@ -779,7 +779,7 @@ document.addEventListener("submit", async (e) => {
 $("icp-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
-    await run(() => api(`/api/services/${S.sel}/icp`, { method: "PUT", body: JSON.stringify(icpPayload()) }), "Targeting saved. No search was run.");
+    await run(() => api(`/api/services/${S.sel}/icp`, { method: "PUT", body: JSON.stringify(icpPayload()) }), "ICP saved. No search was run.");
     $("icp-dialog").close();
   } catch (error) { $("icp-error").textContent = error.message; $("icp-error").hidden = false; }
 });
