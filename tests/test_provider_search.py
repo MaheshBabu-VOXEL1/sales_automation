@@ -8,6 +8,24 @@ import provider_search
 
 
 class ProviderSearchTest(unittest.TestCase):
+    def test_obvious_job_boards_and_publications_skip_paid_followup_calls(self):
+        seen = []
+        def fake(url, _header, _key, _params):
+            seen.append(url)
+            if url.endswith("mixed_companies/search"):
+                return {"organizations": [
+                    {"id": "a", "name": "Construction Jobs", "website_url": "https://jobs.test"},
+                    {"id": "b", "name": "Civil Engineering & Construction Review", "website_url": "https://review.test"},
+                    {"id": "c", "name": "Ode Consultants", "industry": "construction", "website_url": "https://ode.test"},
+                ]}
+            if url == provider_search.BRAVE:
+                return {"web": {"results": [{"url": "https://ode.test/bim", "title": "BIM projects"}]}}
+            return {"people": []}
+        with patch.dict(os.environ, {"APOLLO_API_KEY": "secret", "BRAVE_SEARCH_API_KEY": "secret"}), patch.object(provider_search, "request_json", side_effect=fake):
+            result = provider_search.discover({"countries": ["India"]}, "training")
+        self.assertEqual([lead["company"] for lead in result["companies"]], ["Ode Consultants"])
+        self.assertEqual(sum(url == provider_search.BRAVE for url in seen), 1)
+
     def test_organization_enrichment_uses_get_and_people_match_uses_post(self):
         seen = []
         def opened(request, timeout):

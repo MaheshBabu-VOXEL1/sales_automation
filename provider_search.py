@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,6 +17,8 @@ DEFAULT_TITLES = {
 }
 SERVICE_TERMS = {"training": ("BIM", "Revit"), "bim": ("BIM", "Revit")}
 CATEGORY_TAGS = {"architecture": "architecture", "construction": "construction", "engineering": "civil engineering", "real_estate": "real estate", "education": "education"}
+NON_BUYER_NAME = re.compile(r"\b(?:jobs?|job board|news|magazine|journal|review|directory)\b", re.IGNORECASE)
+NON_BUYER_INDUSTRIES = {"publishing", "newspapers", "online media", "staffing and recruiting"}
 
 
 class ProviderError(RuntimeError):
@@ -44,6 +47,13 @@ def website_of(org):
     return url[:500] if parsed.hostname else None
 
 
+def obvious_non_buyer(org):
+    """Skip clear job boards and publications before spending Brave requests."""
+    name = str(org.get("name") or "")
+    industry = str(org.get("industry") or "").strip().casefold()
+    return bool(NON_BUYER_NAME.search(name)) or industry in NON_BUYER_INDUSTRIES
+
+
 def discover(icp, service):
     apollo_key = os.environ.get("APOLLO_API_KEY", "")
     brave_key = os.environ.get("BRAVE_SEARCH_API_KEY", "")
@@ -69,7 +79,7 @@ def discover(icp, service):
     warnings = []
     enrich = os.environ.get("APOLLO_ENRICH_DETAILS") == "1"
     for org in response["organizations"][:LIMIT]:
-        if not isinstance(org, dict) or not org.get("id") or not org.get("name"):
+        if not isinstance(org, dict) or not org.get("id") or not org.get("name") or obvious_non_buyer(org):
             continue
         website = website_of(org)
         if not website:
