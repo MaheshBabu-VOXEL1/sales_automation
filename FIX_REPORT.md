@@ -228,3 +228,27 @@ Checks were run by the session that started the fix work. They used mocked provi
 - **No corrections for sent records.** A sent record with a mistake can't be corrected yet; that needs a "correct record" action with an audit event.
 - **Old error text in the heartbeat.** `last_error` keeps the most recent error text after later successful ticks. The UI compares timestamps to decide whether it's current.
 - **Operational items still open.** Whether the worker stays up on Render (F-H1 operations), and the budget and configuration items (F-C1, F-C2).
+
+## Deployment verification (2026-10-15, read-only)
+
+**Deployed:** commit `ffef6d151874e15c1c5a5a731131ed1e005561f3` was pushed to `main` and was live on Render at 10:12:22 UTC. `GET /api/version` returns that commit without login; data endpoints still return 401 without a session.
+
+**Method.** I captured a read-only baseline at 10:11 UTC, before the push, and compared it after the deploy. I used only GET requests plus opening and cancelling the Sales Goal form. No test suite ran against production. No campaign, budget, provider, pause or Outlook setting was changed.
+
+| Check | Result |
+|---|---|
+| `/api/version` | `ffef6d1` (was 404 before the deploy) |
+| Existing drafts | Unchanged: items 1–4 have the same states, revisions and timestamps (1 recorded-sent, 3 pending) |
+| Jobs | Unchanged: the same 5 jobs (1 discovery, 4 email drafts). No new jobs were created after the deploy, and no `rhythm:*` jobs exist. |
+| Campaign | Unchanged: the same objective, keywords and keys. `full_rhythm` is still off and `service_focus` is unset. |
+| Leads | Unchanged: 18 (BIM 7, Training 11), with the same IDs |
+| Pause, daily planning, Outlook | Unchanged: nothing paused, daily planning off, Outlook not connected, queue empty |
+| Budget | Unchanged: caps 5 / 100 / 60 / 100; used Apollo 22, Brave 38, Gemini 37; 4 searches. Provider ledger still at 97 requests, so no paid calls happened after the deploy. |
+| Worker heartbeat | Ticking on the new build: samples at 10:13:18, 10:14:50 and 10:15:36 UTC, with no errors. The UI shows "Last worker tick … Build ffef6d1" with no stale or error warning. |
+| DAR Engineering lead room | Shows the domain-mismatch warning and "Apollo email status: verified". The company phone is still labelled as not a direct line. |
+| El Seif lead room | "Recorded as sent; locked", with no Reopen or Edit button. No domain warning (the domain matches). |
+| Sales Goal form | Shows the new "Required service focus" field (empty) and "Optional search keywords" (the existing value). Closed with Cancel; nothing saved. |
+
+**Observed during deploy.** Every deploy or restart signed users out, because sessions are kept in memory (F-L7). Users must sign in again after each deploy.
+
+**Verdict: Partially ready.** The fixes are deployed and the existing data is intact. The live draft rhythm still isn't enabled, and continuous production operation is unproven until a live pilot completes.
