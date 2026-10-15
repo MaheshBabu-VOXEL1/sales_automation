@@ -178,6 +178,51 @@ class GrowthTest(unittest.TestCase):
             self.assertEqual(server.run(db, "SELECT COUNT(*) AS n FROM provider_usage").fetchone()["n"], 1)
         self.assertEqual(self.request("GET", "/api/growth")[1]["jobs"][0]["state"], "done")
 
+    def test_unified_sales_goal_saves_atomically_and_preserves_pause(self):
+        config = self.campaign()
+        self.request("PUT", "/api/growth/settings/bim", {"paused": True})
+        config.update(goal=4, quarter="2026-Q4", strategy="Prioritize named BIM seats", content_targets={"LinkedIn": 2})
+        code, saved = self.request("PUT", "/api/growth/campaign/bim", config)
+        self.assertEqual(code, 200, saved)
+        snapshot = self.request("GET", "/api/growth")[1]
+        settings = next(r for r in snapshot["settings"] if r["service"] == "bim")
+        self.assertEqual((settings["goal"], settings["paused"], settings["strategy"]), (4, 1, config["strategy"]))
+        icp = self.request("GET", "/api/services/bim/icp")[1]
+        self.assertEqual(icp["countries"], ["Saudi Arabia"])
+        self.assertEqual(icp["keywords"], "Scan to BIM")
+        config.update(goal=9, quarter="invalid")
+        self.assertEqual(self.request("PUT", "/api/growth/campaign/bim", config)[0], 400)
+        self.assertEqual(next(r for r in self.request("GET", "/api/growth")[1]["settings"] if r["service"] == "bim")["goal"], 4)
+
+    def test_content_targets_create_tasks_once_and_honor_pause(self):
+        config = self.campaign()
+        config.update(goal=4, quarter="2026-Q4", strategy="Scan to BIM", content_targets={"LinkedIn": 2, "Facebook": 1})
+        self.assertEqual(self.request("PUT", "/api/growth/campaign/bim", config)[0], 200)
+        instant = datetime(2026, 10, 17, 1, tzinfo=timezone.utc)
+        self.request("PUT", "/api/growth/settings/global", {"paused": True})
+        automation.tick(server, instant)
+        self.assertEqual(self.request("GET", "/api/growth")[1]["items"], [])
+        self.request("PUT", "/api/growth/settings/global", {"paused": False})
+        with patch.object(automation, "discovery", return_value={"lead_ids": []}):
+            automation.tick(server, instant)
+            automation.tick(server, instant)
+        tasks = self.request("GET", "/api/growth")[1]["items"]
+        self.assertEqual(len(tasks), 3)
+        self.assertTrue(all(t["label"] == "Content" and t["state"] == "pending" for t in tasks))
+
+    def test_quarter_wins_use_transitions_not_room_edits(self):
+        config = self.campaign()
+        config.update(goal=4, quarter="2026-Q4", strategy="BIM", content_targets={})
+        self.request("PUT", "/api/growth/campaign/bim", config)
+        lead = self.company("bim")
+        path = f"/api/growth/leads/{lead['id']}"
+        self.request("PUT", path, {"service": "bim", "stage": "won", "owner": "A"})
+        self.request("PUT", path, {"service": "bim", "stage": "won", "owner": "B"})
+        self.assertEqual(self.request("GET", "/api/growth")[1]["sales_progress"]["bim"]["quarter_won"], 1)
+        with closing(server.connect()) as db, db:
+            server.run(db, "UPDATE growth_events SET created_at='2026-07-15T00:00:00+00:00' WHERE lead_id=?", (lead["id"],))
+        self.assertEqual(self.request("GET", "/api/growth")[1]["sales_progress"]["bim"]["quarter_won"], 0)
+
     def test_task_lifecycle_and_stale_revision(self):
         task = self.item(label="Sales", due="2026-10-15", due_time="09:30", owner="You")
         self.assertEqual((task["state"], task["revision"], task["label"], task["due_time"]), ("pending", 1, "Sales", "09:30"))

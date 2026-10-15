@@ -1,5 +1,6 @@
 """Persistent, bounded discovery-to-draft jobs. No external delivery."""
 import json
+import re
 from contextlib import closing
 from datetime import datetime, timezone
 
@@ -38,11 +39,54 @@ def save(api, db, service, payload):
     config = {"objective": objective, "start": start, "end": end,
               "search_time": payload["search_time"], "draft_time": payload["draft_time"],
               "targeting": profile}
+    # Legacy campaign requests remain valid and preserve unified settings.
+    current = api.run(db, "SELECT config FROM agent_campaigns WHERE service=?", (service,)).fetchone()
+    previous = json.loads(current["config"]) if current else {}
+    for key in ("quarter", "content_targets", "strategy"):
+        if key in previous:
+            config[key] = previous[key]
+    if "goal" in payload:
+        if type(payload["goal"]) is not int or not 0 <= payload["goal"] <= 10000:
+            raise ValueError("Sales target must be a whole number from 0 to 10000.")
+        quarter = growth.text(payload, "quarter", 7, True)
+        if not re.fullmatch(r"[0-9]{4}-Q[1-4]", quarter):
+            raise ValueError("Use a quarter such as 2026-Q4.")
+        strategy = growth.text(payload, "strategy", 1000)
+        targets = payload.get("content_targets", {})
+        if not isinstance(targets, dict) or any(k not in ("LinkedIn", "Instagram", "Facebook") for k in targets):
+            raise ValueError("Choose LinkedIn, Instagram or Facebook content targets.")
+        if any(type(v) is not int or not 0 <= v <= 10 for v in targets.values()):
+            raise ValueError("Content targets must be whole numbers from 0 to 10 posts per day.")
+        config.update(quarter=quarter, content_targets=targets, strategy=strategy)
+        growth.save_settings(db, api.run, service, {"goal": payload["goal"], "strategy": strategy})
+        # Manual searches and scheduled searches use the same saved targeting.
+        api.run(db, """UPDATE icps SET name=?, country=?, city=?, categories=?, notes=?, profile_json=?, updated_at=? WHERE service=?""",
+                (profile["name"], profile["country"], profile["city"], json.dumps(profile["categories"]), profile["notes"],
+                 json.dumps({k: profile[k] for k in ("countries", "employee_min", "employee_max", "titles", "keywords", "exclusions", "goal")}), api.now(), service))
     api.run(db, """INSERT INTO agent_campaigns (service, config, updated_at) VALUES (?, ?, ?)
         ON CONFLICT(service) DO UPDATE SET config=excluded.config, updated_at=excluded.updated_at""",
         (service, json.dumps(config), api.now()))
     growth.event(db, api.run, service, None, None, "campaign_saved", config)
     return config
+
+
+def progress(db, run):
+    """Quarter wins require a recorded transition; editing a room is not a win."""
+    result = {}
+    for row in run(db, "SELECT service, config FROM agent_campaigns").fetchall():
+        service, config = row["service"], json.loads(row["config"])
+        quarter = config.get("quarter")
+        wins = set()
+        if quarter:
+            for e in run(db, "SELECT lead_id, detail, created_at FROM growth_events WHERE service=? AND event='lead_room_updated'", (service,)):
+                detail = json.loads(e["detail"])
+                at = datetime.fromisoformat(e["created_at"]).astimezone(growth.IST)
+                if detail.get("stage") == "won" and detail.get("from_stage") != "won" and f"{at.year}-Q{(at.month - 1) // 3 + 1}" == quarter:
+                    wins.add(e["lead_id"])
+            still_won = {r["lead_id"] for r in run(db, "SELECT lead_id FROM growth_leads WHERE service=? AND stage='won'", (service,))}
+            wins &= still_won
+        result[service] = {"quarter": quarter, "quarter_won": len(wins)}
+    return result
 
 
 def active(api, service):
@@ -116,6 +160,22 @@ def tick(api, instant=None):
         service, config = row["service"], json.loads(row["config"])
         if day < config["start"] or (config["end"] and day > config["end"]):
             continue
+        if clock >= "06:00":
+            with closing(api.connect()) as db, db:
+                if not growth.is_paused(db, api.run, service):
+                    for channel, count in config.get("content_targets", {}).items():
+                        for index in range(count):
+                            job = f"content:{channel}:{index + 1}"
+                            claimed = api.run(db, """INSERT INTO agent_jobs (service, day, job, state, updated_at)
+                                VALUES (?, ?, ?, 'planned', ?) ON CONFLICT(service, day, job) DO NOTHING RETURNING job""",
+                                (service, day, job, api.now())).fetchone()
+                            if claimed:
+                                item = growth.save_item(db, api.run, None, {"service": service, "kind": "task",
+                                    "title": f"Prepare {channel} post {index + 1} for review", "label": "Content",
+                                    "due": day, "due_time": "16:00", "channel": channel, "owner": "You",
+                                    "body": f"Goal: {config['objective']}\nStrategy: {config.get('strategy', '')}\nCreate a content draft for approval. Publication is not connected."})
+                                api.run(db, "UPDATE agent_jobs SET result=? WHERE service=? AND day=? AND job=?",
+                                        (json.dumps({"message": "Content preparation task created; draft and publish manually.", "task_id": item["id"]}), service, day, job))
         if clock >= config["search_time"] and claim(api, service, day, "discovery"):
             try:
                 finish(api, service, day, "discovery", "done", discovery(api, service, config))
@@ -144,7 +204,8 @@ def tick(api, instant=None):
                 continue
             try:
                 active(api, service)
-                item = api.ai_draft_lead(service, lead_id, {"purpose": "First contact", "guidance": config["objective"]})
+                guidance = (config["objective"] + "\nStrategy: " + config.get("strategy", ""))[:500]
+                item = api.ai_draft_lead(service, lead_id, {"purpose": "First contact", "guidance": guidance})
                 finish(api, service, day, job, "needs_approval", {"item_id": item["id"], "message": "Draft prepared. Review it in Approvals; nothing was sent."})
             except Exception as exc:
                 finish(api, service, day, job, "needs_you", {"message": safe_error(api, exc)})

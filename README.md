@@ -104,12 +104,23 @@ The public Overpass service is volunteer-operated and unsuitable for bulk prospe
 
 ## Scheduled discovery and drafts (local agent workflow)
 
-Run `python server.py` and keep the computer awake. In a service's Daily rhythm,
-choose **Set campaign & start**. Save an objective, countries, service keywords,
+Run `python server.py` and keep the hosting server running. In a service's Daily rhythm,
+choose **Set Sales Goal**. Save an objective, countries, service keywords,
 decision-maker roles, company sizes, dates, and discovery/draft times in IST.
 Saving explicitly activates recurring requests within the configured monthly caps.
-Industry/exclusion settings are initially copied from Edit ICP; the campaign keeps
-its own targeting snapshot until edited. Blank end date means ongoing.
+The unified Sales Goal also saves strategy, quarterly won-sales target and quarter,
+industries, exclusions, and daily LinkedIn/Instagram/Facebook content targets.
+It updates manual-search and scheduled-search targeting in one transaction.
+Blank end date means ongoing. Existing pause settings are preserved.
+
+Daily content targets create manual preparation tasks due at 16:00 IST, starting
+from 06:00 each active campaign day; these are not generated posts. The strategy
+and objective guide outreach drafting. Changing a goal never repeats an attempted
+discovery or draft that day. Quarterly wins count recorded transitions into Won in
+the selected quarter (IST), deduplicated per lead and restricted to leads still Won.
+Editing a Won room does not count as a new sale. Older wins lacking a recorded
+transition are not assigned an invented date. Lead/message/meeting progress counts
+remain service-wide; sent counts use manual "Record as sent" entries.
 
 The server checks every 30 seconds, every day including weekends. Due discovery
 runs once per service per IST date, using Apollo + Brave + Gemini buyer screening.
@@ -132,4 +143,5 @@ today. Job recovery assumes one local server process per database.
 Run only one server instance. A local server cannot execute while Windows sleeps,
 is shut down, or the Python process is closed. This release does not install a
 Windows startup service or change power settings. It does not connect a sending
-mailbox, schedule recipient-timezone delivery, or implement quarterly win metrics.
+mailbox or schedule recipient-timezone delivery. Google Workspace/Gmail is the
+selected future sending provider; no Gmail account has been connected yet.

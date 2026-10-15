@@ -63,7 +63,9 @@ def init(db, run, identity):
 
 
 def snapshot(db, run):
-    return {"campaigns": [{"service": r["service"], **json.loads(r["config"])} for r in run(db, "SELECT * FROM agent_campaigns")],
+    import automation
+    return {"sales_progress": automation.progress(db, run),
+            "campaigns": [{"service": r["service"], **json.loads(r["config"])} for r in run(db, "SELECT * FROM agent_campaigns")],
             "jobs": [dict(r) for r in run(db, "SELECT * FROM agent_jobs ORDER BY day DESC, updated_at DESC LIMIT 100")],
             "rhythm_templates": RHYTHMS,
             "rhythm_settings": [dict(r) for r in run(db, "SELECT * FROM growth_rhythm_settings")],

@@ -44,7 +44,7 @@ async function load() {
     ...SERVICES.map((s) => api(`/api/services/${s.id}/icp`)),
     ...SERVICES.map((s) => api(`/api/services/${s.id}/leads`)),
   ]);
-  if (!growth.campaigns || !growth.jobs) throw new Error("An older server is running. Restart python server.py from this project, then refresh this page.");
+  if (!growth.campaigns || !growth.jobs || !growth.sales_progress) throw new Error("The server update is not ready yet. Refresh after deployment, or restart python server.py for a local server.");
   S.growth = growth;
   SERVICES.forEach((s, i) => { S.icp[s.id] = rest[i]; S.leads[s.id] = rest[SERVICES.length + i]; });
   S.budget = providerMode() ? await api("/api/budget").catch(() => null) : null;
@@ -61,7 +61,7 @@ const allLeads = (id) => S.leads[id] || [];
 const activeLeads = (id) => allLeads(id).filter((l) => (l.review_decision || "active") === "active");
 const lead = (leadId) => SERVICES.flatMap((s) => allLeads(s.id)).find((l) => l.id === leadId);
 const detail = (leadId) => S.growth.lead_details.find((d) => d.lead_id === leadId) || { stage: "new", owner: "", room_notes: "" };
-const wonCount = (id) => activeLeads(id).filter((l) => detail(l.id).stage === "won").length;
+const wonCount = (id) => S.growth.sales_progress?.[id]?.quarter ? S.growth.sales_progress[id].quarter_won : activeLeads(id).filter((l) => detail(l.id).stage === "won").length;
 const pendingDrafts = (id) => S.growth.items.filter((i) => i.kind !== "task" && i.state === "pending" && (!id || i.service === id));
 const reasonLabel = (id, code) => S.icp[id]?.review_reasons?.[code] || code || "No reason recorded";
 
@@ -181,10 +181,10 @@ function header(s) {
   return `<div class="crumb">Growth Engine <span>/</span> ${S.lead ? `<button type="button" data-act="back">${esc(s.name)}</button> <span>/</span> Lead room` : esc(s.name)}</div>
   <div class="ph">
     <div class="ph-l"><span class="av lg av-${s.id === "training" ? "train" : s.id}">${s.code}</span><div style="min-width:0"><div class="title-row"><h1>${esc(s.name)}</h1>${badge}</div><p>${esc(st.strategy || "No strategy written yet.")}</p></div></div>
-    <div class="ph-r"><button class="btn" type="button" data-act="icp">Edit ICP</button><button class="btn" type="button" data-act="edit-goal">Goal &amp; strategy</button><button class="btn" type="button" data-act="pause">${settings(s.id).paused ? "Resume workspace" : "Pause workspace"}</button></div>
+    <div class="ph-r"><button class="btn" type="button" data-act="edit-goal">Sales Goal</button><button class="btn" type="button" data-act="pause">${settings(s.id).paused ? "Resume workspace" : "Pause workspace"}</button></div>
   </div>
   <section class="kpis" aria-label="Key figures">
-    <div class="kpi"><span>Sales goal</span><b>${won}<small> / ${goal}</small></b>${seg}</div>
+    <div class="kpi"><span>Sales goal ${esc(S.growth.sales_progress?.[s.id]?.quarter || "(all time)")}</span><b>${won}<small> / ${goal}</small></b>${seg}</div>
     <div class="kpi"><span>Active leads</span><b>${leads.length}</b><span>${leads.filter((l) => l.email || l.phone).length} with email or phone</span></div>
     <div class="kpi"><span>In pipeline</span><b>${pipeline}</b><span>engaged to negotiation</span></div>
     <div class="kpi"><span>Today’s plan</span><b>${done}<small> / ${plan.length}</small></b><span>tasks done</span></div>
@@ -206,8 +206,11 @@ function todayRows(id) {
 function agentPanel(s) {
   const campaign = S.growth.campaigns.find((c) => c.service === s.id);
   const jobs = S.growth.jobs.filter((j) => j.service === s.id);
-  return `<section class="panel"><div class="panel-h"><div><h2>Live agent workflow</h2><p class="note">${campaign ? `${esc(campaign.objective)} · Discovery ${esc(campaign.search_time)} / drafts ${esc(campaign.draft_time)} IST, every day. ${paused(s.id) ? "Paused." : "Active during campaign dates."}` : "Set a campaign to start scheduled lead discovery and approval-ready drafts."}</p></div><button class="btn pri" data-act="campaign">${campaign ? "Edit campaign" : "Set campaign & start"}</button></div>
-    <div class="panel-b">${S.growth.automation_missing?.length ? `<p class="blocked">Setup needed on this computer: ${S.growth.automation_missing.map(esc).join(", ")}. Add these server environment settings and restart; never paste API keys into campaign fields.</p>` : ""}<p class="note">Uses Apollo, Brave and Gemini within server budgets. Up to one search and five draft attempts per day. No messages are sent. Keep the local server running and the computer awake. <button class="linkish" data-act="refresh-jobs">Refresh results</button></p></div>
+  const messages = items(s.id, "outreach");
+  const meetings = activeLeads(s.id).filter((l) => detail(l.id).stage === "meeting").length;
+  return `<section class="panel"><div class="panel-h"><div><h2>Live agent workflow</h2><p class="note">${campaign ? `${esc(campaign.objective)} · Discovery ${esc(campaign.search_time)} / drafts ${esc(campaign.draft_time)} IST, every day. ${paused(s.id) ? "Paused." : "Active during campaign dates."}` : "Set a Sales Goal to start scheduled lead discovery and approval-ready drafts."}</p></div><button class="btn pri" data-act="campaign">${campaign ? "Edit Sales Goal" : "Set Sales Goal"}</button></div>
+    <div class="panel-b"><p class="note">${activeLeads(s.id).length} active leads · ${messages.filter((i) => i.state === "pending").length} messages awaiting approval · ${messages.filter((i) => i.state === "done").length} recorded sent · ${meetings} currently at meeting stage · ${wonCount(s.id)} won${campaign?.quarter ? ` in ${esc(campaign.quarter)}` : " (all time)"}. Lead, message and meeting counts are service-wide.</p>${campaign?.content_targets ? `<p class="note">Daily content targets: ${Object.entries(campaign.content_targets).map(([channel, count]) => `${esc(channel)} ${count}`).join(" · ")}. Content preparation is manual.</p>` : ""}</div>
+    <div class="panel-b">${S.growth.automation_missing?.length ? `<p class="blocked">Server setup needed: ${S.growth.automation_missing.map(esc).join(", ")}. Add these server environment settings and restart; never paste API keys into goal fields.</p>` : ""}<p class="note">Uses Apollo, Brave and Gemini within server budgets. Up to one search and five draft attempts per day. No messages are sent. Scheduled work requires the hosting server to stay running. <button class="linkish" data-act="refresh-jobs">Refresh results</button></p></div>
     <div class="tw"><table><thead><tr><th>Day (IST)</th><th>Job</th><th>Status</th><th>Result</th></tr></thead><tbody>${jobs.length ? jobs.map((j) => {
       const r = JSON.parse(j.result || "{}");
       return `<tr><td>${esc(j.day)}</td><td>${esc(j.job)}</td><td>${esc(j.state.replaceAll("_", " "))}</td><td>${esc(r.message || `${r.found ?? 0} found; ${r.added ?? 0} added`)}${r.warnings?.length ? `<span class="sub">${esc(r.warnings.join(" "))}</span>` : ""}${r.item_id ? '<button class="linkish" data-act="approvals">Review draft in Approvals</button>' : ""}</td></tr>`;
@@ -704,34 +707,35 @@ async function act(el) {
     }
     case "approvals": S.page = "approvals"; S.lead = null; render(); return;
     case "refresh-jobs": await run(async () => {}, "Results refreshed.").catch(() => {}); return;
+    case "edit-goal":
     case "campaign": {
       const c = S.growth.campaigns.find((c) => c.service === s.id);
       const t = c?.targeting || S.icp[s.id];
-      openEditor({ title: `${s.name}: campaign goal`, help: "Saving activates scheduled research and drafting every day within the dates below. Times are IST. Existing Pause controls stop execution. This uses provider requests within your server’s monthly caps. Set industries and exclusions in Edit ICP before creating a campaign; saved campaigns retain their targeting until edited.",
+      const st = settings(s.id);
+      const year = Number(today().slice(0, 4)), month = Number(today().slice(5, 7));
+      openEditor({ title: `${s.name}: Sales Goal`, help: "Set the sales outcome and the direction for this agent. Saving activates daily discovery and drafting within the dates below, using server provider budgets. Times are IST. Pause controls still apply. Existing jobs are not repeated today. Content targets guide manual planning; sending is not connected.",
         fields: [
+          { name: "goal", label: "Quarterly target (won sales)", type: "number", min: 0, value: st.goal, required: true },
+          { name: "quarter", label: "Sales quarter (YYYY-Q1 to YYYY-Q4)", value: c?.quarter || `${year}-Q${Math.ceil(month / 3)}`, required: true, max: 7 },
+          { name: "strategy", label: "Strategy", type: "textarea", rows: 3, max: 1000, value: st.strategy, full: true },
           { name: "objective", label: "Service focus and campaign objective", value: c?.objective || t.goal || "", required: true, max: 500, full: true },
           { name: "countries", label: "Target countries (comma separated)", value: t.countries.join(", "), required: true },
+          { name: "industries", label: "Industries (comma separated: architecture, construction, engineering, real_estate, education)", value: t.categories.join(", "), required: true, full: true },
           { name: "keywords", label: "Service keywords", value: t.keywords, max: 500 },
           { name: "titles", label: "Decision-maker roles", value: t.titles, max: 500 },
           { name: "employee_min", label: "Minimum company size", type: "number", value: t.employee_min, optional: true },
           { name: "employee_max", label: "Maximum company size", type: "number", value: t.employee_max, optional: true },
+          { name: "exclusions", label: "Exclude keywords", value: t.exclusions || "", max: 500, optional: true },
           { name: "start", label: "Start date (IST)", type: "date", value: c?.start || today(), required: true },
           { name: "end", label: "End date (blank = ongoing)", type: "date", value: c?.end || "", optional: true },
           { name: "search_time", label: "Daily discovery (IST)", type: "time", value: c?.search_time || "06:00", required: true },
           { name: "draft_time", label: "Daily drafts (IST)", type: "time", value: c?.draft_time || (s.id === "bim" ? "09:00" : "10:00"), required: true },
-        ], submitLabel: "Save and activate campaign",
-        submit: (v) => api(`/api/growth/campaign/${s.id}`, { method: "PUT", body: JSON.stringify({ ...v, accept_budget: true,
-          targeting: { ...t, countries: v.countries.split(",").map((x) => x.trim()).filter(Boolean), keywords: v.keywords, titles: v.titles, employee_min: v.employee_min, employee_max: v.employee_max, goal: v.objective } }) }),
+          ...["LinkedIn", "Instagram", "Facebook"].map((channel) => ({ name: `posts_${channel}`, label: `${channel} posts per day (0–10)`, type: "number", min: 0, value: c?.content_targets?.[channel] || 0, required: true })),
+        ], submitLabel: "Save Sales Goal and activate",
+        submit: (v) => api(`/api/growth/campaign/${s.id}`, { method: "PUT", body: JSON.stringify({ ...v, goal: Number(v.goal), accept_budget: true,
+          content_targets: Object.fromEntries(["LinkedIn", "Instagram", "Facebook"].map((channel) => [channel, Number(v[`posts_${channel}`])])),
+          targeting: { ...t, categories: v.industries.split(",").map((x) => x.trim()).filter(Boolean), countries: v.countries.split(",").map((x) => x.trim()).filter(Boolean), keywords: v.keywords, titles: v.titles, exclusions: v.exclusions, employee_min: v.employee_min, employee_max: v.employee_max, goal: v.objective } }) }),
       }); return;
-    }
-    case "edit-goal": {
-      const st = settings(s.id);
-      openEditor({
-        title: `${s.name}: goal and strategy`, help: "The goal is the number of won deals you are aiming for. Won deals are counted from lead rooms set to Won.",
-        fields: [{ name: "goal", label: "Sales goal (won deals)", type: "number", min: 0, value: st.goal, required: true }, { name: "strategy", label: "Strategy", type: "textarea", rows: 4, max: 1000, value: st.strategy }],
-        submit: (v) => { const goal = Number(v.goal); if (!Number.isInteger(goal) || goal < 0 || goal > 10000) throw new Error("Enter a whole number from 0 to 10000."); return api(`/api/growth/settings/${s.id}`, { method: "PUT", body: JSON.stringify({ goal, strategy: v.strategy }) }); },
-      });
-      return;
     }
     case "new-task": itemEditor("task", s.id); return;
     case "new-content": itemEditor("content", s.id); return;
