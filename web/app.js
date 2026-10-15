@@ -98,6 +98,7 @@ async function run(task, success) {
 
 const stHtml = (cls, label) => `<span class="st ${cls}"><i></i>${esc(label)}</span>`;
 function itemStatus(i) {
+  if (i.kind === "room" && i.state === "done") return stHtml("done", "Applied to room");
   if (i.state === "done" && S.growth.outlook?.queue.some((q) => q.item_id === i.id && q.state === "accepted")) return stHtml("done", "Submitted to Outlook");
   if (i.state === "done") return i.kind === "task" ? stHtml("done", "Done") : stHtml("done", "Posted / sent by you");
   if (i.state === "approved") return stHtml("done", "Approved draft");
@@ -126,7 +127,7 @@ function itemButtons(i) {
   } else if (i.state === "approved") {
     b.push(`<button class="btn" data-item="copy" data-id="${id}">Copy text</button>`);
     b.push(`<button class="btn" data-item="download" data-id="${id}">Download</button>`);
-    b.push(`<button class="btn pri" data-item="complete" data-id="${id}">Record as ${i.kind === "content" ? "posted" : "sent"}</button>`);
+    b.push(i.kind === "room" ? `<button class="btn pri" data-item="apply-room" data-id="${id}">Apply to room</button>` : `<button class="btn pri" data-item="complete" data-id="${id}">Record as ${i.kind === "content" ? "posted" : "sent"}</button>`);
     if (i.kind === "outreach" && i.channel === "Email") {
       const queued = S.growth.outlook?.queue.find((q) => q.item_id === id && q.state !== "cancelled");
       b.push(queued ? `<span class="note">Outlook: ${esc(queued.state)}</span>` : `<button class="btn pri" data-item="outlook-send" data-id="${id}">Send with Outlook</button>`);
@@ -214,7 +215,7 @@ function agentPanel(s) {
   const messages = items(s.id, "outreach");
   const meetings = activeLeads(s.id).filter((l) => detail(l.id).stage === "meeting").length;
   return `<section class="panel"><div class="panel-h"><div><h2>Live agent workflow</h2><p class="note">${campaign ? `${esc(campaign.objective)} · Discovery ${esc(campaign.search_time)} / drafts ${esc(campaign.draft_time)} IST, every day. ${paused(s.id) ? "Paused." : "Active during campaign dates."}` : "Set a Sales Goal to start scheduled lead discovery and approval-ready drafts."}</p></div><button class="btn pri" data-act="campaign">${campaign ? "Edit Sales Goal" : "Set Sales Goal"}</button></div>
-    <div class="panel-b"><p class="note">${activeLeads(s.id).length} active leads · ${messages.filter((i) => i.state === "pending").length} messages awaiting approval · ${messages.filter((i) => i.state === "done").length} recorded sent · ${meetings} currently at meeting stage · ${wonCount(s.id)} won${campaign?.quarter ? ` in ${esc(campaign.quarter)}` : " (all time)"}. Lead, message and meeting counts are service-wide.</p>${campaign?.content_targets ? `<p class="note">Daily content targets: ${Object.entries(campaign.content_targets).map(([channel, count]) => `${esc(channel)} ${count}`).join(" · ")}. Content preparation is manual.</p>` : ""}</div>
+    <div class="panel-b"><p class="note">${activeLeads(s.id).length} active leads · ${messages.filter((i) => i.state === "pending").length} messages awaiting approval · ${messages.filter((i) => i.state === "done").length} recorded sent · ${meetings} currently at meeting stage · ${wonCount(s.id)} won${campaign?.quarter ? ` in ${esc(campaign.quarter)}` : " (all time)"}. Lead, message and meeting counts are service-wide.</p>${campaign?.content_targets ? `<p class="note">Daily content targets: ${Object.entries(campaign.content_targets).map(([channel, count]) => `${esc(channel)} ${count}`).join(" · ")}. ${campaign.auto_linkedin ? "AI LinkedIn text drafts enabled from 12:00 IST." : "LinkedIn preparation is manual."} ${campaign.auto_rooms ? "AI room drafts enabled from 07:30 IST." : "Room preparation is manual."} Other social content remains manual.</p>` : ""}</div>
     <div class="panel-b">${S.growth.automation_missing?.length ? `<p class="blocked">Server setup needed: ${S.growth.automation_missing.map(esc).join(", ")}. Add these server environment settings and restart; never paste API keys into goal fields.</p>` : ""}<p class="note">Uses Apollo, Brave and Gemini within server budgets. Up to one search and five draft attempts per day. Discovery and drafting send no messages; approved emails can be explicitly queued through Outlook. Scheduled work requires the hosting server to stay running. <button class="linkish" data-act="refresh-jobs">Refresh results</button></p></div>
     <div class="tw"><table><thead><tr><th>Day (IST)</th><th>Job</th><th>Status</th><th>Result</th></tr></thead><tbody>${jobs.length ? jobs.map((j) => {
       const r = JSON.parse(j.result || "{}");
@@ -235,7 +236,7 @@ function rhythm(s) {
   }).join("");
   const row = (i) => {
     const l = i.lead_id ? lead(i.lead_id) : null;
-    const typeCell = i.kind === "task" ? (i.label ? `<span class="ty ${esc(i.label)}">${esc(i.label)}</span>` : '<span class="ty plain">Task</span>') : `<span class="ty Content">${i.kind === "content" ? "Content" : "Outreach"}</span>`;
+    const typeCell = i.kind === "task" ? (i.label ? `<span class="ty ${esc(i.label)}">${esc(i.label)}</span>` : '<span class="ty plain">Task</span>') : `<span class="ty Content">${i.kind === "room" ? "Lead room" : i.kind === "content" ? "Content" : "Outreach"}</span>`;
     return `<tr><td class="t">${esc(fmtWhen(i))}</td><td>${typeCell}</td>
       <td><b class="strong">${esc(i.title)}</b>${l ? `<span class="sub">Lead: <button class="linkish" type="button" data-lead="${l.id}">${esc(l.company)}</button></span>` : ""}${i.kind !== "task" ? `<span class="sub">${esc(i.channel)} draft${i.label ? " · " + esc(i.label) : ""}</span>` : ""}${draftText(i)}${itemButtons(i)}</td>
       <td>${who(i.owner)}</td><td>${itemStatus(i)}</td></tr>`;
@@ -342,7 +343,7 @@ function content(s) {
     </table></div>
   </section>
   <section class="panel">
-    <div class="panel-h"><div><h2>Content plan</h2><span class="note">Drafts are reviewed here. Approving does not post anything: copy or download the approved text, post it yourself, then record it as posted.</span></div><button class="btn pri" type="button" data-act="new-content">New draft</button></div>
+    <div class="panel-h"><div><h2>Content plan</h2><span class="note">Review drafts here. Approving does not publish anything.</span></div><div class="actions"><button class="btn" type="button" data-act="ai-linkedin">Draft LinkedIn post with AI</button><button class="btn pri" type="button" data-act="new-content">New draft</button></div></div>
     <div class="tw"><table>
       <thead><tr><th>Date</th><th>Channel</th><th>Piece</th><th>Purpose</th><th>Status</th></tr></thead>
       <tbody>${list.length ? list.map((i) => `<tr><td class="t">${esc(fmtWhen(i))}</td><td>${chanCell(i.channel)}</td>
@@ -372,6 +373,8 @@ function historyText(h, serviceId) {
     case "created": return `${d.kind === "task" ? "Task" : "Draft"} added: ${esc(d.title)}.`;
     case "edited": return `Edited: ${esc(d.title)}.`;
     case "ai_drafted": return `AI wrote a ${esc((d.purpose || "").toLowerCase())} draft (${esc(d.model)}): ${esc(d.title)}. Waiting for review.`;
+    case "ai_output_drafted": return `AI prepared a ${esc(d.kind)} draft (${esc(d.model)}): ${esc(d.title)}. Waiting for review.`;
+    case "room_draft_applied": return `Approved outline applied to the internal room: ${esc(d.title)}.`;
     case "approve": return `Approved draft: ${esc(d.title)} (not sent).`;
     case "reject": return `${d.kind === "task" ? "Skipped" : "Rejected"}: ${esc(d.title)}.`;
     case "complete": return d.kind === "task" ? `Done: ${esc(d.title)}.` : `Recorded as posted/sent: ${esc(d.title)}.`;
@@ -396,7 +399,7 @@ function room(s, l) {
     ${d.stage === "lost" ? '<p class="panel-b note">Marked as lost. Choose a stage above to reopen it.</p>' : ""}
   </section>
   <div class="grid2">
-    <section class="panel"><div class="panel-h"><h2>Next steps</h2><div class="actions"><button class="btn" type="button" data-act="lead-task">Add task</button><button class="btn" type="button" data-act="lead-draft">Draft message</button>${active ? '<button class="btn pri" type="button" data-act="ai-draft">Write draft with AI</button>' : ""}</div></div>
+    <section class="panel"><div class="panel-h"><h2>Next steps</h2><div class="actions"><button class="btn" type="button" data-act="lead-task">Add task</button><button class="btn" type="button" data-act="lead-draft">Draft message</button>${active ? '<button class="btn" type="button" data-act="ai-room">Draft room with AI</button><button class="btn pri" type="button" data-act="ai-draft">Write draft with AI</button>' : ""}</div></div>
       ${steps.length ? steps.map((i) => `<div class="ns"><span class="ck ${i.state === "done" || i.state === "approved" ? "done" : i.kind !== "task" && i.state === "pending" ? "you" : ""}">${i.state === "done" || i.state === "approved" ? CHECK : ""}</span>
         <div><b>${esc(i.title)}</b><span class="when">${esc(fmtWhen(i))} · ${i.kind === "task" ? esc(i.label || "Task") : esc(i.channel) + " draft"}</span> ${itemStatus(i)}${draftText(i)}${itemButtons(i)}</div>${who(i.owner)}</div>`).join("")
         : '<p class="panel-b note">No next steps yet. Add a task or draft a message for this lead.</p>'}
@@ -435,9 +438,9 @@ function approvalRows() {
   return S.growth.items.filter((i) => i.kind !== "task" && (i.state === "pending" || i.state === "approved")).map((i) => {
     const l = i.lead_id ? lead(i.lead_id) : null;
     const stage = l ? detail(l.id).stage : "";
-    const pri = i.kind === "outreach" ? (["proposal", "negotiation"].includes(stage) || l?.status === "interested" ? "High" : "Medium") : "Low";
-    const why = pri === "High" ? (l?.status === "interested" ? "Interested lead" : "Deal at proposal stage") : i.kind === "outreach" ? "Message to a lead" : "Planned content";
-    return { i, l, pri, why, type: i.kind === "outreach" ? "Outreach" : "Content" };
+    const pri = i.kind !== "content" ? (["proposal", "negotiation"].includes(stage) || l?.status === "interested" ? "High" : "Medium") : "Low";
+    const why = pri === "High" ? (l?.status === "interested" ? "Interested lead" : "Deal at proposal stage") : i.kind === "room" ? "Internal room draft" : i.kind === "outreach" ? "Message to a lead" : "Planned content";
+    return { i, l, pri, why, type: i.kind === "room" ? "Room" : i.kind === "outreach" ? "Outreach" : "Content" };
   }).sort((a, b) => ({ High: 0, Medium: 1, Low: 2 })[a.pri] - ({ High: 0, Medium: 1, Low: 2 })[b.pri] || byDue(a.i, b.i));
 }
 
@@ -471,7 +474,7 @@ function approvalsPage() {
     <div class="filters">
       <div class="fgroup"><span class="lbl">Priority</span>${chips("p", [["all", "All"], ["High", "High", cnt((a) => a.pri === "High")], ["Medium", "Medium", cnt((a) => a.pri === "Medium")], ["Low", "Low", cnt((a) => a.pri === "Low")]])}</div>
       <div class="fgroup"><span class="lbl">Service</span>${chips("s", [["all", "All"], ...SERVICES.map((s) => [s.id, s.name, cnt((a) => a.i.service === s.id)])])}</div>
-      <div class="fgroup"><span class="lbl">Type</span>${chips("t", [["all", "All"], ["Outreach", "Messages", cnt((a) => a.type === "Outreach")], ["Content", "Content", cnt((a) => a.type === "Content")]])}</div>
+      <div class="fgroup"><span class="lbl">Type</span>${chips("t", [["all", "All"], ["Outreach", "Messages", cnt((a) => a.type === "Outreach")], ["Room", "Lead rooms", cnt((a) => a.type === "Room")], ["Content", "Content", cnt((a) => a.type === "Content")]])}</div>
       <label class="fshow"><input type="checkbox" id="show-approved" ${f.show ? "checked" : ""}> Show approved</label>
     </div>
     <div class="tw"><table>
@@ -540,7 +543,7 @@ function itemEditor(kind, service, existing = null, leadId = null) {
   const labels = c.labels[kind];
   const leadOptions = [["", "No lead"], ...activeLeads(service).map((l) => [l.id, l.company])];
   const v = existing || { title: "", body: "", owner: kind === "task" ? "You" : "", channel: kind === "task" ? "Internal" : kind === "outreach" ? "Email" : "LinkedIn", label: "", due: today(), due_time: "", lead_id: leadId };
-  const name = kind === "task" ? "task" : kind === "content" ? "content draft" : "message draft";
+  const name = kind === "room" ? "room draft" : kind === "task" ? "task" : kind === "content" ? "content draft" : "message draft";
   const fields = [
     { name: "title", label: kind === "task" ? "Activity" : kind === "content" ? "Piece title" : "Subject / purpose", value: v.title, required: true, max: 200, full: true },
   ];
@@ -572,6 +575,11 @@ function itemEditor(kind, service, existing = null, leadId = null) {
 async function itemAction(action, id) {
   const i = item(id);
   if (!i) return;
+  if (action === "apply-room") {
+    if (!confirm("Apply this approved draft to the internal room outline? Review any existing notes first. It will not be shared externally.")) return;
+    await run(() => api("/api/growth/apply-room", { method: "POST", body: JSON.stringify({ item_id: i.id, revision: i.revision, room_updated_at: detail(i.lead_id).updated_at || "" }) }), (r) => r.message).catch(() => {});
+    return;
+  }
   if (action === "outlook-send") {
     const o = S.growth.outlook;
     if (!o?.connected || !o.tested) { S.page = "outlook"; render(); return; }
@@ -763,7 +771,7 @@ async function act(el) {
       const t = c?.targeting || S.icp[s.id];
       const st = settings(s.id);
       const year = Number(today().slice(0, 4)), month = Number(today().slice(5, 7));
-      openEditor({ title: `${s.name}: Sales Goal`, help: "Set the sales outcome and the direction for this agent. Saving activates daily discovery and drafting within the dates below, using server provider budgets. Times are IST. Pause controls still apply. Existing jobs are not repeated today. Content targets guide manual planning; sending is not connected.",
+      openEditor({ title: `${s.name}: Sales Goal`, help: "Set the sales outcome and direction for this agent. Times are IST. Existing jobs are not repeated today. AI room drafts run from 07:30 (up to five per day); LinkedIn drafts run from 12:00 using the posts-per-day target below. Each output uses a Gemini request within your monthly cap and waits for review. Other social targets create manual tasks.",
         fields: [
           { name: "goal", label: "Quarterly target (won sales)", type: "number", min: 0, value: st.goal, required: true },
           { name: "quarter", label: "Sales quarter (YYYY-Q1 to YYYY-Q4)", value: c?.quarter || `${year}-Q${Math.ceil(month / 3)}`, required: true, max: 7 },
@@ -780,14 +788,28 @@ async function act(el) {
           { name: "end", label: "End date (blank = ongoing)", type: "date", value: c?.end || "", optional: true },
           { name: "search_time", label: "Daily discovery (IST)", type: "time", value: c?.search_time || "06:00", required: true },
           { name: "draft_time", label: "Daily drafts (IST)", type: "time", value: c?.draft_time || (s.id === "bim" ? "09:00" : "10:00"), required: true },
+          { name: "auto_rooms", label: "AI lead-room drafts", type: "select", options: [["no", "Manual only"], ["yes", "Prepare automatically for screened leads"]], value: c?.auto_rooms ? "yes" : "no" },
+          { name: "auto_linkedin", label: "AI LinkedIn text drafts", type: "select", options: [["no", "Manual only"], ["yes", "Prepare daily target automatically"]], value: c?.auto_linkedin ? "yes" : "no" },
           ...["LinkedIn", "Instagram", "Facebook"].map((channel) => ({ name: `posts_${channel}`, label: `${channel} posts per day (0–10)`, type: "number", min: 0, value: c?.content_targets?.[channel] || 0, required: true })),
         ], submitLabel: "Save Sales Goal and activate",
-        submit: (v) => api(`/api/growth/campaign/${s.id}`, { method: "PUT", body: JSON.stringify({ ...v, goal: Number(v.goal), accept_budget: true,
+        submit: (v) => api(`/api/growth/campaign/${s.id}`, { method: "PUT", body: JSON.stringify({ ...v, goal: Number(v.goal), accept_budget: true, auto_rooms: v.auto_rooms === "yes", auto_linkedin: v.auto_linkedin === "yes",
           content_targets: Object.fromEntries(["LinkedIn", "Instagram", "Facebook"].map((channel) => [channel, Number(v[`posts_${channel}`])])),
           targeting: { ...t, categories: v.industries.split(",").map((x) => x.trim()).filter(Boolean), countries: v.countries.split(",").map((x) => x.trim()).filter(Boolean), keywords: v.keywords, titles: v.titles, exclusions: v.exclusions, employee_min: v.employee_min, employee_max: v.employee_max, goal: v.objective } }) }),
       }); return;
     }
     case "new-task": itemEditor("task", s.id); return;
+    case "ai-room":
+    case "ai-linkedin": {
+      const kind = d.act === "ai-room" ? "room" : "linkedin";
+      if (!confirm(`Prepare a ${kind === "room" ? "lead-room" : "LinkedIn post"} draft with AI? This uses one Gemini request within the monthly cap. Nothing is shared or published.`)) return;
+      await run(async () => {
+        const output = await api("/api/growth/output-draft", { method: "POST", body: JSON.stringify({ service: s.id, kind, lead_id: kind === "room" ? S.lead : null }) });
+        S.open[output.id] = true;
+        if (kind === "linkedin") { S.lead = null; S.view = "content"; }
+        return output;
+      }, "Draft prepared for review.").catch(() => {});
+      return;
+    }
     case "new-content": itemEditor("content", s.id); return;
     case "lead-task": itemEditor("task", s.id, null, S.lead); return;
     case "lead-draft": itemEditor("outreach", s.id, null, S.lead); return;

@@ -19,6 +19,7 @@ LABELS = {
     "task": ("Marketing", "BD", "Outreach", "Sales", "Account", "Content"),
     "content": ("Proof", "Authority", "Education", "Lead gen", "Nurture", "Partner"),
     "outreach": ("First contact", "Follow-up", "Proposal", "Partner"),
+    "room": ("Outline",),
 }
 ACTIONS = {"approve": "approved", "reject": "rejected", "complete": "done", "reopen": "pending"}
 
@@ -155,7 +156,7 @@ def save_lead(db, run, lead_id, payload):
     run(db, """INSERT INTO growth_leads (lead_id, service, stage, owner, room_notes, updated_at)
         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(lead_id) DO UPDATE SET
         stage=excluded.stage, owner=excluded.owner, room_notes=excluded.room_notes, updated_at=excluded.updated_at""",
-        (lead_id, service, stage, owner, notes, stamp()))
+        (lead_id, service, stage, owner, notes, datetime.now(timezone.utc).isoformat(timespec="microseconds")))
     event(db, run, service, None, lead_id, "lead_room_updated",
           {"from_stage": before["stage"] if before else "new", "stage": stage, "owner": owner})
     return dict(run(db, "SELECT * FROM growth_leads WHERE lead_id=?", (lead_id,)).fetchone())
@@ -206,6 +207,8 @@ def save_item(db, run, item_id, payload):
         if action not in ACTIONS:
             raise ValueError("Unknown action.")
         kind, state = current["kind"], current["state"]
+        if kind == "room" and action == "complete":
+            raise ValueError("Use Apply to room to apply an approved room draft.")
         if action == "approve" and (kind == "task" or not current["body"].strip()):
             raise ValueError("Only a content or outreach draft with text can be approved.")
         if action == "complete" and kind != "task" and state != "approved":
@@ -228,6 +231,8 @@ def save_item(db, run, item_id, payload):
     if kind not in LABELS:
         raise ValueError("Choose a task, content draft or outreach draft.")
     fields = item_fields(db, run, service, kind, payload)
+    if kind == "room" and (not fields["lead_id"] or fields["channel"] != "Internal"):
+        raise ValueError("Room drafts must be internal and linked to a lead.")
     if current is None:
         row = run(db, """INSERT INTO growth_items (service, kind, lead_id, title, body, owner, channel, label, due, due_time, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",

@@ -113,8 +113,9 @@ industries, exclusions, and daily LinkedIn/Instagram/Facebook content targets.
 It updates manual-search and scheduled-search targeting in one transaction.
 Blank end date means ongoing. Existing pause settings are preserved.
 
-Daily content targets create manual preparation tasks due at 16:00 IST, starting
-from 06:00 each active campaign day; these are not generated posts. The strategy
+Daily content targets create preparation tasks due at 16:00 IST, starting
+from 06:00 each active campaign day. AI LinkedIn drafts can replace its manual tasks
+when enabled in Sales Goal (see below). The strategy
 and objective guide outreach drafting. Changing a goal never repeats an attempted
 discovery or draft that day. Quarterly wins count recorded transitions into Won in
 the selected quarter (IST), deduplicated per lead and restricted to leads still Won.
@@ -145,3 +146,33 @@ is shut down, or the Python process is closed. This release does not install a
 Windows startup service or change power settings. Optional Outlook connection and
 recipient-timezone submission are described in [OUTLOOK_SETUP.md](OUTLOOK_SETUP.md).
 Connecting a mailbox does not automatically release existing approvals.
+
+## Review drafts before platform integration
+
+The current milestone is company-specific internal room drafts and LinkedIn text
+drafts. Outlook setup/integration is owned separately; these jobs do not share,
+send, or publish their outputs.
+
+- In **Sales Goal**, choose **AI lead-room drafts → Prepare automatically for
+  screened leads** to create up to five initial room drafts per service/day from
+  07:30 IST. Existing notes and pending/approved/applied room drafts are preserved.
+- Choose **AI LinkedIn text drafts → Prepare daily target automatically** and set
+  **LinkedIn posts per day** above zero. The worker prepares those drafts from
+  12:00 IST independently of whether discovery found a new lead that day.
+- Both settings are off for existing campaigns until explicitly enabled, avoiding
+  unexpected extra paid requests after deployment. Every generation attempt uses
+  the existing Gemini monthly cap and gets a provider-usage entry. No failed job
+  is automatically repeated that day, and restart claims prevent duplicates.
+- **Draft room with AI** in a lead room and **Draft LinkedIn post with AI** under
+  Content allow user-triggered generation with the same pause/budget checks.
+- Room drafts appear as **Lead rooms** in Approvals. Approval alone leaves the
+  existing outline untouched. **Apply to room** explicitly replaces that outline
+  while retaining its owner and stage, with a conflict check if notes changed.
+- LinkedIn drafts appear in Content, Daily Rhythm and Approvals. They receive only
+  the offering and campaign direction, never stored lead names, contacts, room
+  notes or private lead history. The AI uses an educational style; a person still
+  checks factual accuracy and suitability before publication.
+
+Instagram/Facebook targets still create manual tasks. Graphic generation, other
+channel drafts, automatic follow-ups and complete rhythm execution remain later
+milestones; the reference schedule is not evidence those activities are automated.

@@ -30,6 +30,7 @@ import growth
 import ai_draft
 import automation
 import outlook
+import draft_outputs
 import sys
 
 
@@ -346,7 +347,7 @@ def ai_draft_count(db, month: str) -> int:
                (month,)).fetchone()["n"]
 
 
-def reserve_ai_draft() -> None:
+def reserve_ai_draft(operation="outreach_draft") -> None:
     """Count one Gemini request against the monthly cap before it is sent; raises BudgetBlocked otherwise."""
     with connect() as db:
         if DATABASE_URL:
@@ -359,8 +360,8 @@ def reserve_ai_draft() -> None:
             raise BudgetBlocked(f"Gemini: no monthly request limit is set. Set {BUDGET_ENV['gemini']} on the server.")
         if status["used"]["gemini"] + status["held"]["gemini"] + 1 > limit:
             raise BudgetBlocked(f"Gemini: the monthly limit of {limit} requests is used up. Raise {BUDGET_ENV['gemini']} on the server to allow more.")
-        run(db, "INSERT INTO provider_usage (run_id, month, provider, operation, created_at) VALUES (0, ?, 'gemini', 'outreach_draft', ?)",
-            (status["month"], now()))
+        run(db, "INSERT INTO provider_usage (run_id, month, provider, operation, created_at) VALUES (0, ?, 'gemini', ?, ?)",
+            (status["month"], operation, now()))
 
 
 def ai_draft_lead(service: str, lead_id: int, payload: dict) -> dict:
@@ -932,6 +933,10 @@ class Handler(BaseHTTPRequestHandler):
             with connect() as db:
                 if len(parts) == 4 and parts[2] == "campaign" and method == "PUT":
                     result = automation.save(sys.modules[__name__], db, parts[3], payload)
+                elif parts[2:] == ["output-draft"] and method == "POST":
+                    result = draft_outputs.create(sys.modules[__name__], payload.get("service"), payload.get("kind"), payload.get("lead_id"))
+                elif parts[2:] == ["apply-room"] and method == "POST":
+                    result = draft_outputs.apply_room(db, run, payload)
                 else:
                     result = growth.mutate(db, run, method, parts[2:], payload, log_event)
             self.respond(200, result)
@@ -939,6 +944,10 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(404, {"error": str(exc)})
         except growth.Conflict as exc:
             self.respond(409, {"error": str(exc)})
+        except BudgetBlocked as exc:
+            self.respond(409, {"error": str(exc)})
+        except RuntimeError as exc:
+            self.respond(502, {"error": str(exc)})
         except (ValueError, json.JSONDecodeError) as exc:
             self.respond(400, {"error": str(exc)})
         return True

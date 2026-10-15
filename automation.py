@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import growth
 import provider_search
+import draft_outputs
 
 
 def init(db, run):
@@ -42,9 +43,14 @@ def save(api, db, service, payload):
     # Legacy campaign requests remain valid and preserve unified settings.
     current = api.run(db, "SELECT config FROM agent_campaigns WHERE service=?", (service,)).fetchone()
     previous = json.loads(current["config"]) if current else {}
-    for key in ("quarter", "content_targets", "strategy"):
+    for key in ("quarter", "content_targets", "strategy", "auto_rooms", "auto_linkedin"):
         if key in previous:
             config[key] = previous[key]
+    for key in ("auto_rooms", "auto_linkedin"):
+        if key in payload:
+            if type(payload[key]) is not bool:
+                raise ValueError("Draft automation settings must be true or false.")
+            config[key] = payload[key]
     if "goal" in payload:
         if type(payload["goal"]) is not int or not 0 <= payload["goal"] <= 10000:
             raise ValueError("Sales target must be a whole number from 0 to 10000.")
@@ -164,6 +170,8 @@ def tick(api, instant=None):
             with closing(api.connect()) as db, db:
                 if not growth.is_paused(db, api.run, service):
                     for channel, count in config.get("content_targets", {}).items():
+                        if channel == "LinkedIn" and config.get("auto_linkedin"):
+                            continue
                         for index in range(count):
                             job = f"content:{channel}:{index + 1}"
                             claimed = api.run(db, """INSERT INTO agent_jobs (service, day, job, state, updated_at)
@@ -181,6 +189,32 @@ def tick(api, instant=None):
                 finish(api, service, day, "discovery", "done", discovery(api, service, config))
             except Exception as exc:
                 finish(api, service, day, "discovery", "needs_you", {"message": safe_error(api, exc)})
+        # Public post drafts do not depend on finding a new lead today.
+        if config.get("auto_linkedin") and clock >= "12:00":
+            for slot in range(1, config.get("content_targets", {}).get("LinkedIn", 0) + 1):
+                job = f"linkedin:{slot}"
+                if claim(api, service, day, job):
+                    try:
+                        item = draft_outputs.create(api, service, "linkedin", slot=slot, day=day)
+                        finish(api, service, day, job, "needs_approval", {"item_id": item["id"], "message": "LinkedIn text drafted. Review in Content or Approvals; not published."})
+                    except Exception as exc:
+                        finish(api, service, day, job, "needs_you", {"message": safe_error(api, exc)})
+        if config.get("auto_rooms") and clock >= "07:30":
+            with closing(api.connect()) as db:
+                candidates = api.run(db, """SELECT l.id FROM leads l WHERE l.service=? AND l.ai_screened=1
+                    AND l.review_decision='active' AND l.status<>'not_interested'
+                    AND NOT EXISTS (SELECT 1 FROM growth_items i WHERE i.lead_id=l.id AND i.kind='room' AND i.state IN ('pending', 'approved', 'done'))
+                    AND NOT EXISTS (SELECT 1 FROM growth_leads r WHERE r.lead_id=l.id AND r.room_notes<>'') ORDER BY l.id LIMIT 5""", (service,)).fetchall()
+            with closing(api.connect()) as db:
+                attempts = api.run(db, "SELECT COUNT(*) AS n FROM agent_jobs WHERE service=? AND day=? AND job LIKE ?", (service, day, "room:%")).fetchone()["n"]
+            for lead in candidates[:max(0, 5 - attempts)]:
+                job = f"room:{lead['id']}"
+                if claim(api, service, day, job):
+                    try:
+                        item = draft_outputs.create(api, service, "room", lead_id=lead["id"], day=day)
+                        finish(api, service, day, job, "needs_approval", {"item_id": item["id"], "message": "Internal room draft prepared. Review and approve before applying; existing outline unchanged."})
+                    except Exception as exc:
+                        finish(api, service, day, job, "needs_you", {"message": safe_error(api, exc)})
         if clock < config["draft_time"]:
             continue
         with closing(api.connect()) as db:
