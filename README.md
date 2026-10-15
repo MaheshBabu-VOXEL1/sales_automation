@@ -7,12 +7,12 @@ An internal sales workspace with two service pipelines: **Training** and **BIM S
 The interface follows the Voxel1 Growth Engine design (top bar, service sidebar, KPI cards, Daily rhythm, Leads, Content, Approvals and lead rooms), limited to Training and BIM Services. Every figure comes from saved data; nothing is simulated.
 
 - **Daily rhythm** lists tasks your team planned for today plus drafts waiting for approval. *Add rhythm to today’s plan* creates the reference HTML’s 10 BIM or 6 Training activities as ordinary tasks owned by you, retaining the original times and purpose. The reference schedule is always visible and labelled IST (Asia/Kolkata); saved task notes retain that timezone. Existing tasks are preserved, and same-title tasks already dated today are not added again. Sample results and completed statuses from the reference are not imported. Enable daily planning per service to generate a plan every weekday from 06:00 IST while the Python server is running. A background worker checks every 30 seconds, even without an open browser. Paused workspaces are skipped; resuming creates only today’s plan, with no backfill for missed days. Database slot claims prevent repeated plans after retries or restarts. This schedules task creation only: tasks still require manual execution, and no provider searches, AI calls, sends, or posts run automatically. Restart the server after upgrading, then enable daily planning in each Daily rhythm tab.
-- **Edit ICP** sits in every service workspace header, next to *Goal & strategy*, and opens that service's ICP (countries, industries, company size, titles, keywords, exclusions, goal, notes). Saving it never runs a search.
+- **Sales Goal** in each service header combines the quarterly target, strategy, ICP targeting, campaign dates, schedules and content targets. **Edit ICP** remains in Find companies for manual-search configuration.
 - **Leads** holds *Find companies* (*Edit ICP*, manual *Add company*, budgeted *Search companies*) and the lead list with filters. Rejected and archived leads keep their history.
 - **Lead room** sets the sales stage (New → Won, or Lost), owner and a private room outline, and plans linked tasks and message drafts. It also shows why the lead is listed, its source, contacts, interest and review, and its full history. Rooms are internal: no client page is shared and no opens are tracked.
 - **Content** plans drafts by channel and purpose. Reach, enquiries and meetings are not measured, because no social, email or analytics account is connected.
-- **Approvals** lists pending content and message drafts across both services, with priority, service and type filters. **Approving never sends or posts anything.** Copy or download the approved text, send or post it yourself, then use *Record as sent/posted*. Editing a draft returns it to *Needs approval*.
-- **Goal & strategy** sets each service's won-deal goal (it starts at 0). Won deals are counted from lead rooms set to *Won*.
+- **Approvals** lists pending drafts. **Approving never sends or posts anything.** After approval, choose **Send with Outlook** to explicitly queue an email, or send manually and use *Record as sent*. Editing returns the draft to *Needs approval* and invalidates a queued revision.
+- **Outlook** in the top bar connects `maheshbabu.d@voxel1.com`, sends a self-test, and shows the delivery queue. It requires private sign-in and one-time Microsoft app registration; see [OUTLOOK_SETUP.md](OUTLOOK_SETUP.md). Submission acceptance is recorded separately from confirmed delivery.
 - **Pause workspace / Pause all** blocks new searches, approvals and task completion until resumed. A search already running is not cancelled. Draft editing stays possible.
 - **Dark mode** is remembered in this browser only.
 
@@ -95,7 +95,7 @@ The **Interested / Not interested** dropdown is set by a human after an actual i
 
 ## Limits before real deployment
 
-This runs on localhost without a password by default. Public binding requires a shared username and password (`VOXEL1_AUTH_USER` and `VOXEL1_AUTH_PASSWORD`) or an explicit `VOXEL1_PUBLIC_NO_AUTH=1` opt-in. Private mode presents a normal `/login` page and uses a short-lived, HttpOnly session cookie, which works in browsers that do not support HTTP Basic Auth prompts. Existing HTTP Basic Auth still works for API clients. Five failed logins from the same address within a minute trigger a temporary limit. In open mode, anyone with the URL can see stored data and change it. It is not a production multi-user CRM: there are no individual accounts, access audit logs, password reset, or database backups managed by the app. It does not send email, contact leads, call anyone, connect to Claude, verify contact details, or automate voice calls. A production build needs authenticated users, approved ICP versions, privacy controls and audited outreach before outbound work.
+This runs on localhost without a password by default. Public binding requires a shared username and password (`VOXEL1_AUTH_USER` and `VOXEL1_AUTH_PASSWORD`) or an explicit `VOXEL1_PUBLIC_NO_AUTH=1` opt-in. Private mode presents a normal `/login` page and uses a short-lived, HttpOnly session cookie. HTTP Basic Auth remains available for API clients. Five failed logins from one address within a minute trigger a temporary limit. In open mode, visitors can view and change app data; Outlook connection and sending are blocked. This is not a production multi-user CRM: individual accounts, password reset and managed backups are not implemented. Outlook submission requires private mode, Microsoft authorization, a self-test and an explicitly queued approved draft; see [OUTLOOK_SETUP.md](OUTLOOK_SETUP.md). Phone calls, automatic reply handling, delivery verification and social publishing are not implemented.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the current Render deployment procedure. The current Python server and SQLite database cannot be deployed unchanged as a working Vercel project.
 
@@ -142,6 +142,6 @@ today. Job recovery assumes one local server process per database.
 
 Run only one server instance. A local server cannot execute while Windows sleeps,
 is shut down, or the Python process is closed. This release does not install a
-Windows startup service or change power settings. It does not connect a sending
-mailbox or schedule recipient-timezone delivery. Google Workspace/Gmail is the
-selected future sending provider; no Gmail account has been connected yet.
+Windows startup service or change power settings. Optional Outlook connection and
+recipient-timezone submission are described in [OUTLOOK_SETUP.md](OUTLOOK_SETUP.md).
+Connecting a mailbox does not automatically release existing approvals.

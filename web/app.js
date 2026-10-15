@@ -1,5 +1,5 @@
 /* Voxel1 Growth Engine: Training and BIM Services workspaces.
-   Everything shown comes from the server. Nothing is sent, posted or scheduled from here. */
+   Server-backed records; explicit Outlook queues submit approved email only. */
 
 const SERVICES = [
   { id: "bim", name: "BIM Services", code: "BIM" },
@@ -98,6 +98,7 @@ async function run(task, success) {
 
 const stHtml = (cls, label) => `<span class="st ${cls}"><i></i>${esc(label)}</span>`;
 function itemStatus(i) {
+  if (i.state === "done" && S.growth.outlook?.queue.some((q) => q.item_id === i.id && q.state === "accepted")) return stHtml("done", "Submitted to Outlook");
   if (i.state === "done") return i.kind === "task" ? stHtml("done", "Done") : stHtml("done", "Posted / sent by you");
   if (i.state === "approved") return stHtml("done", "Approved draft");
   if (i.state === "rejected") return stHtml("later", i.kind === "task" ? "Skipped" : "Rejected");
@@ -126,6 +127,10 @@ function itemButtons(i) {
     b.push(`<button class="btn" data-item="copy" data-id="${id}">Copy text</button>`);
     b.push(`<button class="btn" data-item="download" data-id="${id}">Download</button>`);
     b.push(`<button class="btn pri" data-item="complete" data-id="${id}">Record as ${i.kind === "content" ? "posted" : "sent"}</button>`);
+    if (i.kind === "outreach" && i.channel === "Email") {
+      const queued = S.growth.outlook?.queue.find((q) => q.item_id === id && q.state !== "cancelled");
+      b.push(queued ? `<span class="note">Outlook: ${esc(queued.state)}</span>` : `<button class="btn pri" data-item="outlook-send" data-id="${id}">Send with Outlook</button>`);
+    }
     b.push(`<button class="btn" data-item="reopen" data-id="${id}">Reopen</button>`);
   } else {
     b.push(`<button class="btn" data-item="reopen" data-id="${id}">Reopen</button>`);
@@ -210,7 +215,7 @@ function agentPanel(s) {
   const meetings = activeLeads(s.id).filter((l) => detail(l.id).stage === "meeting").length;
   return `<section class="panel"><div class="panel-h"><div><h2>Live agent workflow</h2><p class="note">${campaign ? `${esc(campaign.objective)} · Discovery ${esc(campaign.search_time)} / drafts ${esc(campaign.draft_time)} IST, every day. ${paused(s.id) ? "Paused." : "Active during campaign dates."}` : "Set a Sales Goal to start scheduled lead discovery and approval-ready drafts."}</p></div><button class="btn pri" data-act="campaign">${campaign ? "Edit Sales Goal" : "Set Sales Goal"}</button></div>
     <div class="panel-b"><p class="note">${activeLeads(s.id).length} active leads · ${messages.filter((i) => i.state === "pending").length} messages awaiting approval · ${messages.filter((i) => i.state === "done").length} recorded sent · ${meetings} currently at meeting stage · ${wonCount(s.id)} won${campaign?.quarter ? ` in ${esc(campaign.quarter)}` : " (all time)"}. Lead, message and meeting counts are service-wide.</p>${campaign?.content_targets ? `<p class="note">Daily content targets: ${Object.entries(campaign.content_targets).map(([channel, count]) => `${esc(channel)} ${count}`).join(" · ")}. Content preparation is manual.</p>` : ""}</div>
-    <div class="panel-b">${S.growth.automation_missing?.length ? `<p class="blocked">Server setup needed: ${S.growth.automation_missing.map(esc).join(", ")}. Add these server environment settings and restart; never paste API keys into goal fields.</p>` : ""}<p class="note">Uses Apollo, Brave and Gemini within server budgets. Up to one search and five draft attempts per day. No messages are sent. Scheduled work requires the hosting server to stay running. <button class="linkish" data-act="refresh-jobs">Refresh results</button></p></div>
+    <div class="panel-b">${S.growth.automation_missing?.length ? `<p class="blocked">Server setup needed: ${S.growth.automation_missing.map(esc).join(", ")}. Add these server environment settings and restart; never paste API keys into goal fields.</p>` : ""}<p class="note">Uses Apollo, Brave and Gemini within server budgets. Up to one search and five draft attempts per day. Discovery and drafting send no messages; approved emails can be explicitly queued through Outlook. Scheduled work requires the hosting server to stay running. <button class="linkish" data-act="refresh-jobs">Refresh results</button></p></div>
     <div class="tw"><table><thead><tr><th>Day (IST)</th><th>Job</th><th>Status</th><th>Result</th></tr></thead><tbody>${jobs.length ? jobs.map((j) => {
       const r = JSON.parse(j.result || "{}");
       return `<tr><td>${esc(j.day)}</td><td>${esc(j.job)}</td><td>${esc(j.state.replaceAll("_", " "))}</td><td>${esc(r.message || `${r.found ?? 0} found; ${r.added ?? 0} added`)}${r.warnings?.length ? `<span class="sub">${esc(r.warnings.join(" "))}</span>` : ""}${r.item_id ? '<button class="linkish" data-act="approvals">Review draft in Approvals</button>' : ""}</td></tr>`;
@@ -436,6 +441,18 @@ function approvalRows() {
   }).sort((a, b) => ({ High: 0, Medium: 1, Low: 2 })[a.pri] - ({ High: 0, Medium: 1, Low: 2 })[b.pri] || byDue(a.i, b.i));
 }
 
+function outlookPage() {
+  const o = S.growth.outlook;
+  if (!o) return '<section class="panel"><div class="panel-b">The Outlook server update is not ready. Refresh after deployment.</div></section>';
+  return `<div class="ph"><div><h1>Outlook email</h1><p>Sending account: ${esc(o.sender)}</p></div></div>
+  <section class="panel"><div class="panel-b"><h2>${o.connected ? "Outlook connected" : "Connect your Outlook account"}</h2>
+    ${o.missing.length ? `<p class="blocked">Microsoft app setup required on the hosting server: ${o.missing.map(esc).join(", ")}. <a href="/outlook-setup" target="_blank" rel="noopener">Open setup instructions</a> for your Microsoft 365 administrator. No password is needed in this app.</p>` : ""}
+    <p>${o.connected ? (o.tested ? "Microsoft accepted the self-test. Review your Inbox and Sent Items before lead outreach." : "Send a test email to your own address before queuing lead outreach.") : "Sign in as " + esc(o.sender) + " and allow this app to send mail on your behalf. Existing approved drafts stay unsent until you select Send with Outlook."}</p>
+    <div class="actions"><button class="btn pri" data-act="outlook-connect" ${o.missing.length ? "disabled" : ""}>${o.connected ? "Reconnect Outlook" : "Connect Outlook"}</button>${o.connected ? '<button class="btn" data-act="outlook-test">Send test email to myself</button><button class="btn" data-act="outlook-disconnect">Disconnect</button>' : ""}<button class="btn" data-act="refresh-jobs">Refresh status</button></div>
+    <p class="note">Queued lead emails are submitted during 09:00–17:00 weekdays in the chosen recipient timezone, up to five per service per UTC day. Paused workspaces wait. Microsoft acceptance does not confirm delivery. Failed or uncertain submissions are never retried automatically.</p></div>
+    <div class="tw"><table><thead><tr><th>Recipient</th><th>Status</th><th>Result</th><th>Action</th></tr></thead><tbody>${o.queue.map((q) => `<tr><td>${esc(q.recipient)}<span class="sub">${esc(q.timezone)}</span></td><td>${esc(q.state)}</td><td>${esc(q.result || "Waiting for a recipient working-hour window")}</td><td>${q.state === "queued" ? `<button class="btn" data-act="outlook-cancel" data-queue="${esc(q.id)}">Cancel</button>` : ""}</td></tr>`).join("") || '<tr><td colspan="4" class="empty-cell">No email submissions yet.</td></tr>'}</tbody></table></div></section>`;
+}
+
 function approvalsPage() {
   const f = S.af, all = approvalRows();
   const open = all.filter((a) => a.i.state === "pending");
@@ -443,7 +460,7 @@ function approvalsPage() {
   const cnt = (fn) => open.filter(fn).length;
   const chips = (key, opts) => opts.map(([v, label, n]) => `<button class="fchip" type="button" data-af="${key}:${v}" aria-pressed="${f[key] === v}">${esc(label)}${n !== undefined ? ` <span class="num">${n}</span>` : ""}</button>`).join("");
   return `<div class="crumb">Growth Engine <span>/</span> Approvals</div>
-  <div class="ph"><div class="ph-l"><div><h1>Approvals</h1><p>Drafts waiting for a decision across Training and BIM Services. Approving records your decision only; nothing is sent or posted from this app.</p></div></div></div>
+  <div class="ph"><div class="ph-l"><div><h1>Approvals</h1><p>Drafts waiting for a decision across Training and BIM Services. Approval records your decision. Choose Send with Outlook separately to queue an approved email.</p></div></div></div>
   <section class="kpis four">
     <div class="kpi ${open.length ? "warn" : ""}"><span>Waiting</span><b>${open.length}</b><span>across ${new Set(open.map((a) => a.i.service)).size} services</span></div>
     <div class="kpi"><span>High priority</span><b>${cnt((a) => a.pri === "High")}</b><span>interested leads and proposals</span></div>
@@ -472,6 +489,7 @@ function approvalsPage() {
 
 /* ---------- render ---------- */
 function main() {
+  if (S.page === "outlook") { $("main").innerHTML = outlookPage(); return; }
   if (S.page === "approvals") { $("main").innerHTML = approvalsPage(); return; }
   const s = svc(S.sel);
   let h = header(s);
@@ -538,7 +556,7 @@ function itemEditor(kind, service, existing = null, leadId = null) {
   if (kind === "task") fields.push({ name: "body", label: "Notes", type: "textarea", value: v.body, rows: 3, max: 10000, optional: true });
   openEditor({
     title: existing ? `Edit ${name}` : `New ${name}`,
-    help: kind === "task" ? "" : existing && existing.state !== "pending" ? "Saving changes returns this draft to “Needs approval”." : "Drafts are never sent or posted from this app. Approve them here, then send or post them yourself.",
+    help: kind === "task" ? "" : existing && existing.state !== "pending" ? "Saving changes returns this draft to “Needs approval”." : "Approve drafts here, then queue approved email with Outlook or send/post manually.",
     fields,
     submitLabel: existing ? "Save changes" : `Add ${name}`,
     submit: (values) => {
@@ -554,6 +572,21 @@ function itemEditor(kind, service, existing = null, leadId = null) {
 async function itemAction(action, id) {
   const i = item(id);
   if (!i) return;
+  if (action === "outlook-send") {
+    const o = S.growth.outlook;
+    if (!o?.connected || !o.tested) { S.page = "outlook"; render(); return; }
+    const l = lead(i.lead_id);
+    if (!l?.email) { notice("This lead has no business email. Review the contact first.", true); return; }
+    const zones = { "Saudi Arabia": "Asia/Riyadh", "UAE": "Asia/Dubai", "India": "Asia/Kolkata", "Singapore": "Asia/Singapore" };
+    openEditor({ title: "Send approved email with Outlook", help: `From ${o.sender} to ${l.email}. Review the approved text before queuing. The server submits during 09:00–17:00 weekdays in the chosen timezone. An approved draft is sent only when you explicitly queue it here.`,
+      fields: [
+        { name: "recipient", label: "Confirm recipient email", value: l.email, required: true },
+        { name: "timezone", label: "Recipient timezone (e.g. Asia/Riyadh or America/New_York)", value: zones[l.country] || "", required: true, full: true },
+        { name: "permission", label: "I have verified permission to contact this recipient", type: "select", options: [["no", "Not confirmed"], ["yes", "Yes, permission verified"]], value: "no", required: true, full: true },
+      ], submitLabel: "Queue approved email",
+      submit: (v) => api("/api/outlook/queue", { method: "POST", body: JSON.stringify({ item_id: i.id, revision: i.revision, recipient: v.recipient, timezone: v.timezone, permission_confirmed: v.permission === "yes" }) }),
+    }); return;
+  }
   if (action === "toggle") { S.open[id] = !S.open[id]; render(); return; }
   if (action === "edit") { itemEditor(i.kind, i.service, i); return; }
   if (action === "copy") {
@@ -571,7 +604,7 @@ async function itemAction(action, id) {
     return;
   }
   const messages = {
-    approve: "Approved draft. Nothing was sent or posted — copy it and send it yourself.",
+    approve: "Draft approved. Choose Send with Outlook or send manually; approval alone sends nothing.",
     reject: i.kind === "task" ? "Task skipped." : "Draft rejected.",
     complete: i.kind === "task" ? "Task marked done." : `Recorded as ${i.kind === "content" ? "posted" : "sent"} by you.`,
     reopen: "Reopened.",
@@ -672,6 +705,7 @@ function reviewEditor(l, decision) {
 async function act(el) {
   const d = el.dataset;
   const s = svc(S.sel);
+  if (el.id === "outlook") { S.page = "outlook"; S.lead = null; render(); return; }
   if (el.id === "approvals") { S.page = "approvals"; S.lead = null; window.scrollTo({ top: 0 }); render(); return; }
   if (el.id === "theme") {
     const dark = $("theme").textContent === "Dark mode";
@@ -699,6 +733,22 @@ async function act(el) {
     return;
   }
   switch (d.act) {
+    case "outlook-connect": {
+      try {
+        const result = await api("/api/outlook/connect", { method: "POST", body: "{}" });
+        window.location.assign(result.url);
+      } catch (error) { notice(error.message, true); }
+      return;
+    }
+    case "outlook-test":
+      if (confirm(`Send a test email from ${S.growth.outlook.sender} to the same address?`)) await run(() => api("/api/outlook/test", { method: "POST", body: "{}" }), (r) => r.message).catch(() => {});
+      return;
+    case "outlook-disconnect":
+      if (confirm("Disconnect Outlook and cancel queued emails? A submission already in flight may finish.")) await run(() => api("/api/outlook/disconnect", { method: "POST", body: "{}" }), (r) => r.message).catch(() => {});
+      return;
+    case "outlook-cancel":
+      await run(() => api("/api/outlook/cancel", { method: "POST", body: JSON.stringify({ id: d.queue }) }), (r) => r.message).catch(() => {});
+      return;
     case "back": S.lead = null; S.view = "leads"; render(); return;
     case "pause": {
       const on = !settings(s.id).paused;
