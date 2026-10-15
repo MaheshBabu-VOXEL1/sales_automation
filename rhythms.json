@@ -1,0 +1,102 @@
+{
+  "bim": [
+    [
+      "06:00",
+      "Marketing",
+      "Scan tenders and bids that need a named BIM lead",
+      "A named seat in someone else’s bid is the fastest way in."
+    ],
+    [
+      "06:30",
+      "Marketing",
+      "Scan new projects and awards at 60 target accounts",
+      "A new project needs BIM within weeks."
+    ],
+    [
+      "07:00",
+      "BD",
+      "Map who holds each bid, and our warmest way in",
+      "Warm introductions beat cold messages."
+    ],
+    [
+      "07:30",
+      "BD",
+      "Build or update lead rooms",
+      "Each lead gets a page built from their own project."
+    ],
+    [
+      "09:00",
+      "Outreach",
+      "Send warm messages (max 5)",
+      "Every message points to the lead’s room."
+    ],
+    [
+      "10:00",
+      "BD",
+      "Touch one PMC or consultant partner",
+      "PMCs shape vendor lists."
+    ],
+    [
+      "11:00",
+      "Sales",
+      "Follow up proposals and scope calls",
+      "Deals are lost to silence."
+    ],
+    [
+      "14:00",
+      "Account",
+      "Check every client for its next project",
+      "Most work comes from existing clients."
+    ],
+    [
+      "16:00",
+      "Marketing",
+      "Publish one proof piece",
+      "Buyers look us up before they reply."
+    ],
+    [
+      "18:00",
+      "Marketing",
+      "Evening scan and day summary to you",
+      "Nothing waits overnight."
+    ]
+  ],
+  "training": [
+    [
+      "06:00",
+      "Marketing",
+      "Scan contractors hiring BIM roles",
+      "A firm hiring 20 modellers needs them trained fast."
+    ],
+    [
+      "09:00",
+      "BD",
+      "Move one college partnership forward",
+      "Steady batches and future hires."
+    ],
+    [
+      "10:00",
+      "Outreach",
+      "Message L&D heads at hiring contractors",
+      "Sold as site-readiness, not courses."
+    ],
+    [
+      "11:00",
+      "Sales",
+      "Follow up batch proposals",
+      "Batches fill when dates are fixed early."
+    ],
+    [
+      "14:00",
+      "Account",
+      "Offer team training to VITALS and XIM clients",
+      "Clients who can read the model buy more."
+    ],
+    [
+      "16:00",
+      "Marketing",
+      "Share one trainee story (with consent)",
+      "Proof of live-project training."
+    ]
+  ]
+}

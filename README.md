@@ -6,7 +6,7 @@ An internal sales workspace with two service pipelines: **Training** and **BIM S
 
 The interface follows the Voxel1 Growth Engine design (top bar, service sidebar, KPI cards, Daily rhythm, Leads, Content, Approvals and lead rooms), limited to Training and BIM Services. Every figure comes from saved data; nothing is simulated.
 
-- **Daily rhythm** lists tasks your team planned for today plus drafts waiting for approval. *Add suggested routine* creates that service's standard tasks for today as ordinary tasks owned by you. No scheduler or agent runs them.
+- **Daily rhythm** lists tasks your team planned for today plus drafts waiting for approval. *Add rhythm to today’s plan* creates the reference HTML’s 10 BIM or 6 Training activities as ordinary tasks owned by you, retaining the original times and purpose. The reference schedule is always visible and labelled IST (Asia/Kolkata); saved task notes retain that timezone. Existing tasks are preserved, and same-title tasks already dated today are not added again. Sample results and completed statuses from the reference are not imported. Enable daily planning per service to generate a plan every weekday from 06:00 IST while the Python server is running. A background worker checks every 30 seconds, even without an open browser. Paused workspaces are skipped; resuming creates only today’s plan, with no backfill for missed days. Database slot claims prevent repeated plans after retries or restarts. This schedules task creation only: tasks still require manual execution, and no provider searches, AI calls, sends, or posts run automatically. Restart the server after upgrading, then enable daily planning in each Daily rhythm tab.
 - **Edit ICP** sits in every service workspace header, next to *Goal & strategy*, and opens that service's ICP (countries, industries, company size, titles, keywords, exclusions, goal, notes). Saving it never runs a search.
 - **Leads** holds *Find companies* (*Edit ICP*, manual *Add company*, budgeted *Search companies*) and the lead list with filters. Rejected and archived leads keep their history.
 - **Lead room** sets the sales stage (New → Won, or Lost), owner and a private room outline, and plans linked tasks and message drafts. It also shows why the lead is listed, its source, contacts, interest and review, and its full history. Rooms are internal: no client page is shared and no opens are tracked.
@@ -100,3 +100,36 @@ This runs on localhost without a password by default. Public binding requires a 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the current Render deployment procedure. The current Python server and SQLite database cannot be deployed unchanged as a working Vercel project.
 
 The public Overpass service is volunteer-operated and unsuitable for bulk prospecting. Search is bounded and user-triggered here. For full country-wide discovery or significant volume, choose a contracted data source and verify its five-country coverage, or operate an appropriate OpenStreetMap extract. See the [OpenStreetMap Overpass guidance](https://wiki.openstreetmap.org/wiki/Overpass_API). This prototype makes no Nominatim calls.
+
+
+## Scheduled discovery and drafts (local agent workflow)
+
+Run `python server.py` and keep the computer awake. In a service's Daily rhythm,
+choose **Set campaign & start**. Save an objective, countries, service keywords,
+decision-maker roles, company sizes, dates, and discovery/draft times in IST.
+Saving explicitly activates recurring requests within the configured monthly caps.
+Industry/exclusion settings are initially copied from Edit ICP; the campaign keeps
+its own targeting snapshot until edited. Blank end date means ongoing.
+
+The server checks every 30 seconds, every day including weekends. Due discovery
+runs once per service per IST date, using Apollo + Brave + Gemini buyer screening.
+At draft time it prepares up to five first-contact drafts for screened active leads
+from that day's search without an earlier outreach draft. Drafts await approval;
+no messages are sent. Other reference rhythm activities remain manual tasks.
+Pause blocks new jobs and the next metered search request. A provider request
+already in flight can finish; its response may be saved. Resume runs unclaimed
+jobs due today. Earlier dates are not backfilled.
+
+Configure provider keys and all monthly caps documented above in the server's
+environment, then restart. Scheduled workflows refuse public-demo mode. The UI
+shows missing settings without exposing secrets. Failures and interrupted jobs
+remain visible and are not automatically retried that day, avoiding unknown
+charges after a crash. The next day's work is independently scheduled. A successful
+search with provider warnings shows those warnings and may have partial results.
+Campaign edits apply to future claims; they do not repeat a job already attempted
+today. Job recovery assumes one local server process per database.
+
+Run only one server instance. A local server cannot execute while Windows sleeps,
+is shut down, or the Python process is closed. This release does not install a
+Windows startup service or change power settings. It does not connect a sending
+mailbox, schedule recipient-timezone delivery, or implement quarterly win metrics.

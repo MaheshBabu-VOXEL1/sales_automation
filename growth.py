@@ -5,10 +5,13 @@ schedules anything: no mailbox, social account or calendar is connected.
 """
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from urllib.parse import urlparse
 
 SERVICES = ("training", "bim")
+RHYTHMS = json.loads(Path(__file__).with_name("rhythms.json").read_text(encoding="utf-8"))
+IST = timezone(timedelta(hours=5, minutes=30))
 STAGES = ("new", "engaged", "meeting", "proposal", "negotiation", "won", "lost")
 CHANNELS = ("Internal", "Email", "LinkedIn", "Instagram", "Facebook", "YouTube", "WhatsApp", "Phone", "Website", "Event")
 # Tasks carry an activity type; content and outreach drafts carry a purpose.
@@ -29,6 +32,13 @@ def stamp():
 
 
 def init(db, run, identity):
+    run(db, """CREATE TABLE IF NOT EXISTS growth_rhythm_settings (
+        service TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0)""")
+    run(db, """CREATE TABLE IF NOT EXISTS growth_rhythm_runs (
+        service TEXT NOT NULL, day TEXT NOT NULL, slot INTEGER NOT NULL,
+        PRIMARY KEY (service, day, slot))""")
+    for service in SERVICES:
+        run(db, "INSERT INTO growth_rhythm_settings (service) VALUES (?) ON CONFLICT(service) DO NOTHING", (service,))
     run(db, """CREATE TABLE IF NOT EXISTS growth_settings (
         service TEXT PRIMARY KEY, paused INTEGER NOT NULL DEFAULT 0,
         goal INTEGER NOT NULL DEFAULT 0, strategy TEXT NOT NULL DEFAULT '')""")
@@ -53,7 +63,11 @@ def init(db, run, identity):
 
 
 def snapshot(db, run):
-    return {"settings": [dict(r) for r in run(db, "SELECT * FROM growth_settings")],
+    return {"campaigns": [{"service": r["service"], **json.loads(r["config"])} for r in run(db, "SELECT * FROM agent_campaigns")],
+            "jobs": [dict(r) for r in run(db, "SELECT * FROM agent_jobs ORDER BY day DESC, updated_at DESC LIMIT 100")],
+            "rhythm_templates": RHYTHMS,
+            "rhythm_settings": [dict(r) for r in run(db, "SELECT * FROM growth_rhythm_settings")],
+            "settings": [dict(r) for r in run(db, "SELECT * FROM growth_settings")],
             "items": [dict(r) for r in run(db, "SELECT * FROM growth_items ORDER BY id DESC")],
             "lead_details": [dict(r) for r in run(db, "SELECT * FROM growth_leads")],
             "connections": {"email": False, "social": False, "calendar": False},
@@ -230,8 +244,50 @@ def save_item(db, run, item_id, payload):
     return dict(run(db, "SELECT * FROM growth_items WHERE id=?", (item_id,)).fetchone())
 
 
+def generate_rhythm(db, run, service, instant=None):
+    """Claim each template slot transactionally; never execute its business activity."""
+    if service not in SERVICES:
+        raise ValueError("Unknown service.")
+    if is_paused(db, run, service):
+        return {"created": 0}
+    day = (instant or datetime.now(timezone.utc)).astimezone(IST).date().isoformat()
+    created = 0
+    for slot, (time, label, title, purpose) in enumerate(RHYTHMS[service]):
+        claim = run(db, """INSERT INTO growth_rhythm_runs (service, day, slot)
+            VALUES (?, ?, ?) ON CONFLICT(service, day, slot) DO NOTHING RETURNING slot""", (service, day, slot)).fetchone()
+        if not claim:
+            continue
+        # Reuse tasks added through the earlier manual routine UI.
+        if run(db, "SELECT id FROM growth_items WHERE service=? AND kind='task' AND due=? AND title=?", (service, day, title)).fetchone():
+            continue
+        save_item(db, run, None, {"service": service, "kind": "task", "title": title,
+            "label": label, "due": day, "due_time": time, "owner": "You", "channel": "Internal",
+            "body": f"{purpose}\n\nReference schedule: {time} IST (Asia/Kolkata). Execute manually; outbound drafts require approval."})
+        created += 1
+    return {"created": created}
+
+
+def tick_rhythms(db, run, instant=None):
+    instant = instant or datetime.now(timezone.utc)
+    local = instant.astimezone(IST)
+    if local.weekday() >= 5 or local.hour < 6:
+        return
+    for row in run(db, "SELECT service FROM growth_rhythm_settings WHERE enabled=1").fetchall():
+        generate_rhythm(db, run, row["service"], instant)
+
+
 def mutate(db, run, method, parts, payload, log_lead_event):
     """Writes below /api/growth; callers enforce session and same-origin checks."""
+    if len(parts) == 2 and parts[0] == "rhythm" and parts[1] in SERVICES:
+        if method == "POST":
+            return generate_rhythm(db, run, parts[1])
+        if method == "PUT":
+            if type(payload.get("enabled")) is not bool:
+                raise ValueError("Enabled must be true or false.")
+            run(db, "UPDATE growth_rhythm_settings SET enabled=? WHERE service=?", (int(payload["enabled"]), parts[1]))
+            event(db, run, parts[1], None, None, "daily_planning_changed", {"enabled": payload["enabled"]})
+            tick_rhythms(db, run)
+            return {"enabled": payload["enabled"]}
     if parts == ["companies"] and method == "POST":
         return add_company(db, run, payload, log_lead_event)
     if len(parts) == 2 and parts[0] == "settings" and method == "PUT":

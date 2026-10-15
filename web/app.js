@@ -7,25 +7,7 @@ const SERVICES = [
 ];
 const STAGES = ["new", "engaged", "meeting", "proposal", "negotiation", "won"];
 const STAGE_NAMES = { new: "New", engaged: "Engaged", meeting: "Meeting", proposal: "Proposal", negotiation: "Negotiation", won: "Won", lost: "Lost" };
-const ROUTINES = {
-  bim: [
-    ["09:00", "Marketing", "Scan tenders and bids that need a named BIM lead"],
-    ["09:30", "Marketing", "Check target accounts for new projects and awards"],
-    ["10:00", "BD", "Map who holds each bid and our warmest way in"],
-    ["11:00", "Outreach", "Draft up to 5 warm messages for approval"],
-    ["12:00", "Content", "Prepare one proof piece for review"],
-    ["14:00", "Sales", "Follow up proposals and scope calls"],
-    ["16:00", "Account", "Check each client for its next project"],
-  ],
-  training: [
-    ["09:00", "Marketing", "Scan contractors hiring BIM roles"],
-    ["10:00", "BD", "Move one college or partner conversation forward"],
-    ["11:00", "Outreach", "Draft messages to L&D heads for approval"],
-    ["12:00", "Content", "Prepare one training post for review"],
-    ["14:00", "Sales", "Follow up batch proposals"],
-    ["16:00", "Account", "Offer team training to existing clients"],
-  ],
-};
+// Times and task rationale from Voxel1 Growth EngineV2.html; sample results are excluded.
 const CONTENT_RULES = ["Simple, professional tone", "No invented case studies", "Only projects you approve", "No free pilots or trial offers", "Messages only to people who opted in", "You approve every post before it goes out"];
 const CHANNEL_ICON = { Internal: ["·", "#5B6879"], Email: ["@", "#4A6785"], LinkedIn: ["in", "#0A66C2"], Instagram: ["IG", "#B1306E"], Facebook: ["f", "#1877F2"], YouTube: ["YT", "#C4302B"], WhatsApp: ["WA", "#1F7A5C"], Phone: ["☎", "#2B3A50"], Website: ["W", "#0B2545"], Event: ["EV", "#7A5C2E"] };
 
@@ -62,6 +44,7 @@ async function load() {
     ...SERVICES.map((s) => api(`/api/services/${s.id}/icp`)),
     ...SERVICES.map((s) => api(`/api/services/${s.id}/leads`)),
   ]);
+  if (!growth.campaigns || !growth.jobs) throw new Error("An older server is running. Restart python server.py from this project, then refresh this page.");
   S.growth = growth;
   SERVICES.forEach((s, i) => { S.icp[s.id] = rest[i]; S.leads[s.id] = rest[SERVICES.length + i]; });
   S.budget = providerMode() ? await api("/api/budget").catch(() => null) : null;
@@ -194,7 +177,7 @@ function header(s) {
   const now = paused(s.id)
     ? `<b>Paused.</b> New searches, approvals and task completion are blocked until you resume. A search already running is not cancelled.`
     : next ? `<b>Next:</b> ${esc(next.title)} <span class="muted">· ${esc(fmtWhen(next))}${next.owner ? " · " + esc(next.owner) : ""}</span>`
-      : `<b>No open tasks.</b> Add today’s plan from the Daily rhythm tab. Nothing runs automatically.`;
+      : `<b>No open tasks.</b> View live agent jobs or add today’s task plan from Daily rhythm.`;
   return `<div class="crumb">Growth Engine <span>/</span> ${S.lead ? `<button type="button" data-act="back">${esc(s.name)}</button> <span>/</span> Lead room` : esc(s.name)}</div>
   <div class="ph">
     <div class="ph-l"><span class="av lg av-${s.id === "training" ? "train" : s.id}">${s.code}</span><div style="min-width:0"><div class="title-row"><h1>${esc(s.name)}</h1>${badge}</div><p>${esc(st.strategy || "No strategy written yet.")}</p></div></div>
@@ -220,7 +203,19 @@ function todayRows(id) {
   )).sort(byDue);
 }
 
+function agentPanel(s) {
+  const campaign = S.growth.campaigns.find((c) => c.service === s.id);
+  const jobs = S.growth.jobs.filter((j) => j.service === s.id);
+  return `<section class="panel"><div class="panel-h"><div><h2>Live agent workflow</h2><p class="note">${campaign ? `${esc(campaign.objective)} · Discovery ${esc(campaign.search_time)} / drafts ${esc(campaign.draft_time)} IST, every day. ${paused(s.id) ? "Paused." : "Active during campaign dates."}` : "Set a campaign to start scheduled lead discovery and approval-ready drafts."}</p></div><button class="btn pri" data-act="campaign">${campaign ? "Edit campaign" : "Set campaign & start"}</button></div>
+    <div class="panel-b">${S.growth.automation_missing?.length ? `<p class="blocked">Setup needed on this computer: ${S.growth.automation_missing.map(esc).join(", ")}. Add these server environment settings and restart; never paste API keys into campaign fields.</p>` : ""}<p class="note">Uses Apollo, Brave and Gemini within server budgets. Up to one search and five draft attempts per day. No messages are sent. Keep the local server running and the computer awake. <button class="linkish" data-act="refresh-jobs">Refresh results</button></p></div>
+    <div class="tw"><table><thead><tr><th>Day (IST)</th><th>Job</th><th>Status</th><th>Result</th></tr></thead><tbody>${jobs.length ? jobs.map((j) => {
+      const r = JSON.parse(j.result || "{}");
+      return `<tr><td>${esc(j.day)}</td><td>${esc(j.job)}</td><td>${esc(j.state.replaceAll("_", " "))}</td><td>${esc(r.message || `${r.found ?? 0} found; ${r.added ?? 0} added`)}${r.warnings?.length ? `<span class="sub">${esc(r.warnings.join(" "))}</span>` : ""}${r.item_id ? '<button class="linkish" data-act="approvals">Review draft in Approvals</button>' : ""}</td></tr>`;
+    }).join("") : '<tr><td colspan="4" class="empty-cell">No jobs have run yet.</td></tr>'}</tbody></table></div></section>`;
+}
+
 function rhythm(s) {
+  const schedule = S.growth.rhythm_settings.find((r) => r.service === s.id);
   const rows = todayRows(s.id);
   const later = items(s.id, "task").filter((i) => i.state === "pending" && i.due && i.due > today()).sort(byDue);
   const groups = [["Marketing", ["Marketing"]], ["Content", ["Content"]], ["BD", ["BD"]], ["Outreach", ["Outreach"]], ["Sales", ["Sales", "Account"]]];
@@ -237,13 +232,20 @@ function rhythm(s) {
       <td><b class="strong">${esc(i.title)}</b>${l ? `<span class="sub">Lead: <button class="linkish" type="button" data-lead="${l.id}">${esc(l.company)}</button></span>` : ""}${i.kind !== "task" ? `<span class="sub">${esc(i.channel)} draft${i.label ? " · " + esc(i.label) : ""}</span>` : ""}${draftText(i)}${itemButtons(i)}</td>
       <td>${who(i.owner)}</td><td>${itemStatus(i)}</td></tr>`;
   };
-  return `<section class="panel">
+  return `${agentPanel(s)}<section class="panel">
+    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">Working-day template from Voxel1 Growth Engine V2 · All times IST (Asia/Kolkata)</span></div>
+      <div class="actions"><button class="btn" type="button" data-act="auto-rhythm">${schedule.enabled ? "Disable daily planning" : "Enable daily planning"}</button><button class="btn pri" type="button" data-act="routine">Add rhythm to today’s plan</button></div></div>
+    <div class="tw"><table><thead><tr><th>Time (IST)</th><th>Type</th><th>Activity and purpose</th></tr></thead>
+      <tbody>${S.growth.rhythm_templates[s.id].map(([time, label, title, purpose]) => `<tr><td class="t">${esc(time)}</td><td><span class="ty ${esc(label)}">${esc(label)}</span></td><td><b class="strong">${esc(title)}</b><span class="sub">${esc(purpose)}</span></td></tr>`).join("")}</tbody>
+    </table></div><div class="panel-f"><span class="note">${schedule.enabled ? "Daily planning enabled: the server creates one plan each weekday from 06:00 IST while this workspace is active." : "Daily planning is disabled. Enable it to create weekday plans automatically."} Tasks remain for your team to execute. These template tasks are separate from the live jobs above. No sending or publishing. Missed days are not backfilled.</span></div>
+  </section>
+  <section class="panel">
     <div class="panel-h"><div><h2>Today’s plan</h2><span class="note">Tasks your team has planned, plus drafts waiting for approval. Nothing here runs by itself.</span></div>
-      <div class="actions"><button class="btn" type="button" data-act="routine">Add suggested routine</button><button class="btn pri" type="button" data-act="new-task">New task</button></div></div>
+      <div class="actions"><button class="btn" type="button" data-act="routine">Add rhythm to today’s plan</button><button class="btn pri" type="button" data-act="new-task">New task</button></div></div>
     <div class="phases">${phases}</div>
     <div class="tw"><table>
       <thead><tr><th>When</th><th>Type</th><th>Activity</th><th>Owner</th><th>Status</th></tr></thead>
-      <tbody>${rows.length ? rows.map(row).join("") : `<tr><td colspan="5" class="empty-cell">Nothing planned for today. Use <b>New task</b>, or <b>Add suggested routine</b> to create today’s standard tasks for ${esc(s.name)}.</td></tr>`}</tbody>
+      <tbody>${rows.length ? rows.map(row).join("") : `<tr><td colspan="5" class="empty-cell">Nothing planned for today. Use <b>New task</b>, or <b>Add rhythm to today’s plan</b> to create the reference rhythm tasks for ${esc(s.name)}.</td></tr>`}</tbody>
     </table></div>
     <div class="panel-f"><label class="fshow"><input type="checkbox" id="show-done-tasks" ${S.showDoneTasks ? "checked" : ""}> Show all completed and skipped tasks</label></div>
   </section>
@@ -700,6 +702,28 @@ async function act(el) {
       await run(() => api(`/api/growth/settings/${s.id}`, { method: "PUT", body: JSON.stringify({ paused: on }) }), on ? `${s.name} paused.` : `${s.name} resumed.`).catch(() => {});
       return;
     }
+    case "approvals": S.page = "approvals"; S.lead = null; render(); return;
+    case "refresh-jobs": await run(async () => {}, "Results refreshed.").catch(() => {}); return;
+    case "campaign": {
+      const c = S.growth.campaigns.find((c) => c.service === s.id);
+      const t = c?.targeting || S.icp[s.id];
+      openEditor({ title: `${s.name}: campaign goal`, help: "Saving activates scheduled research and drafting every day within the dates below. Times are IST. Existing Pause controls stop execution. This uses provider requests within your server’s monthly caps. Set industries and exclusions in Edit ICP before creating a campaign; saved campaigns retain their targeting until edited.",
+        fields: [
+          { name: "objective", label: "Service focus and campaign objective", value: c?.objective || t.goal || "", required: true, max: 500, full: true },
+          { name: "countries", label: "Target countries (comma separated)", value: t.countries.join(", "), required: true },
+          { name: "keywords", label: "Service keywords", value: t.keywords, max: 500 },
+          { name: "titles", label: "Decision-maker roles", value: t.titles, max: 500 },
+          { name: "employee_min", label: "Minimum company size", type: "number", value: t.employee_min, optional: true },
+          { name: "employee_max", label: "Maximum company size", type: "number", value: t.employee_max, optional: true },
+          { name: "start", label: "Start date (IST)", type: "date", value: c?.start || today(), required: true },
+          { name: "end", label: "End date (blank = ongoing)", type: "date", value: c?.end || "", optional: true },
+          { name: "search_time", label: "Daily discovery (IST)", type: "time", value: c?.search_time || "06:00", required: true },
+          { name: "draft_time", label: "Daily drafts (IST)", type: "time", value: c?.draft_time || (s.id === "bim" ? "09:00" : "10:00"), required: true },
+        ], submitLabel: "Save and activate campaign",
+        submit: (v) => api(`/api/growth/campaign/${s.id}`, { method: "PUT", body: JSON.stringify({ ...v, accept_budget: true,
+          targeting: { ...t, countries: v.countries.split(",").map((x) => x.trim()).filter(Boolean), keywords: v.keywords, titles: v.titles, employee_min: v.employee_min, employee_max: v.employee_max, goal: v.objective } }) }),
+      }); return;
+    }
     case "edit-goal": {
       const st = settings(s.id);
       openEditor({
@@ -725,14 +749,13 @@ async function act(el) {
       });
       return;
     }
+    case "auto-rhythm": {
+      const schedule = S.growth.rhythm_settings.find((r) => r.service === s.id);
+      await run(() => api(`/api/growth/rhythm/${s.id}`, { method: "PUT", body: JSON.stringify({ enabled: !schedule.enabled }) }), "Daily planning updated.").catch(() => {});
+      return;
+    }
     case "routine": {
-      const rows = ROUTINES[s.id];
-      const existing = new Set(items(s.id, "task").filter((i) => i.due === today()).map((i) => i.title));
-      const fresh = rows.filter((r) => !existing.has(r[2]));
-      if (!fresh.length) { notice("Today’s suggested routine is already in the plan."); return; }
-      if (!confirm(`Add ${fresh.length} suggested tasks for today to ${s.name}? They are ordinary tasks owned by you; nothing runs automatically.`)) return;
-      await run(async () => { for (const [time, label, title] of fresh) await api("/api/growth/items", { method: "POST", body: JSON.stringify({ service: s.id, kind: "task", title, label, due: today(), due_time: time, owner: "You", channel: "Internal" }) }); },
-        `${fresh.length} tasks added to today’s plan.`).catch(() => {});
+      await run(() => api(`/api/growth/rhythm/${s.id}`, { method: "POST", body: "{}" }), (result) => `${result.created} tasks added to today’s plan (IST).`).catch(() => {});
       return;
     }
     case "icp": openIcp(); return;
