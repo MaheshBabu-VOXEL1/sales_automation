@@ -135,11 +135,10 @@ jobs due today. Earlier dates are not backfilled.
 Configure provider keys and all monthly caps documented above in the server's
 environment, then restart. Scheduled workflows refuse public-demo mode. The UI
 shows missing settings without exposing secrets. Failures and interrupted jobs
-remain visible and are not automatically retried that day, avoiding unknown
-charges after a crash. The next day's work is independently scheduled. A successful
+remain visible. Successful and uncertain work is not automatically replayed.
+Saving resolved inputs releases input/budget-blocked jobs; the next day's work is independently scheduled. A successful
 search with provider warnings shows those warnings and may have partial results.
-Campaign edits apply to future claims; they do not repeat a job already attempted
-today. Job recovery assumes one local server process per database.
+Campaign edits do not repeat completed jobs. Job recovery assumes one server process per database.
 
 Run only one server instance. A local server cannot execute while Windows sleeps,
 is shut down, or the Python process is closed. This release does not install a
@@ -149,9 +148,13 @@ Connecting a mailbox does not automatically release existing approvals.
 
 ## Review drafts before platform integration
 
-The current milestone is company-specific internal room drafts and LinkedIn text
-drafts. Outlook setup/integration is owned separately; these jobs do not share,
-send, or publish their outputs.
+Use **Sales Goal → Complete draft rhythm** for all BIM/Training activities through
+review drafts: research, contact mapping, room drafts, email/LinkedIn/WhatsApp
+messages, partner/academic outreach, follow-ups, customer enquiries, social posts
+with editable graphic cards, and daily summaries. See
+[DRAFT_RHYTHM_GUIDE.md](DRAFT_RHYTHM_GUIDE.md) for exact schedules, required inputs,
+source rights, request budgets and limitations. Outlook integration is owned
+separately; draft workflows do not send, share or publish their outputs.
 
 - In **Sales Goal**, choose **AI lead-room drafts → Prepare automatically for
   screened leads** to create up to five initial room drafts per service/day from
@@ -163,7 +166,7 @@ send, or publish their outputs.
   unexpected extra paid requests after deployment. Every generation attempt uses
   the existing Gemini monthly cap and gets a provider-usage entry. No failed job
   is automatically repeated that day, and restart claims prevent duplicates.
-- **Draft room with AI** in a lead room and **Draft LinkedIn post with AI** under
+- **Draft room with AI** in a lead room and **Draft social post with AI** under
   Content allow user-triggered generation with the same pause/budget checks.
 - Room drafts appear as **Lead rooms** in Approvals. Approval alone leaves the
   existing outline untouched. **Apply to room** explicitly replaces that outline
@@ -173,6 +176,8 @@ send, or publish their outputs.
   notes or private lead history. The AI uses an educational style; a person still
   checks factual accuracy and suitability before publication.
 
-Instagram/Facebook targets still create manual tasks. Graphic generation, other
-channel drafts, automatic follow-ups and complete rhythm execution remain later
-milestones; the reference schedule is not evidence those activities are automated.
+In complete draft mode, Instagram/Facebook captions and editable SVG cards follow
+daily targets. Without that mode, their targets still create manual tasks. Public
+proof-based copy requires consented source notes; otherwise educational alternatives
+are prepared and the missing proof is flagged. Every standalone generation request
+now counts toward the shared Gemini cap, including room, social and rhythm drafts.

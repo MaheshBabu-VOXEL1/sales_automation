@@ -18,8 +18,9 @@ CHANNELS = ("Internal", "Email", "LinkedIn", "Instagram", "Facebook", "YouTube",
 LABELS = {
     "task": ("Marketing", "BD", "Outreach", "Sales", "Account", "Content"),
     "content": ("Proof", "Authority", "Education", "Lead gen", "Nurture", "Partner"),
-    "outreach": ("First contact", "Follow-up", "Proposal", "Partner"),
+    "outreach": ("First contact", "Follow-up", "Proposal", "Partner", "Account"),
     "room": ("Outline",),
+    "brief": ("Research", "Mapping", "Daily summary", "Call preparation"),
 }
 ACTIONS = {"approve": "approved", "reject": "rejected", "complete": "done", "reopen": "pending"}
 
@@ -67,7 +68,7 @@ def snapshot(db, run):
     import automation
     return {"sales_progress": automation.progress(db, run),
             "campaigns": [{"service": r["service"], **json.loads(r["config"])} for r in run(db, "SELECT * FROM agent_campaigns")],
-            "jobs": [dict(r) for r in run(db, "SELECT * FROM agent_jobs ORDER BY day DESC, updated_at DESC LIMIT 100")],
+            "jobs": [dict(r) for r in run(db, "SELECT * FROM agent_jobs ORDER BY day DESC, updated_at DESC LIMIT 250")],
             "rhythm_templates": RHYTHMS,
             "rhythm_settings": [dict(r) for r in run(db, "SELECT * FROM growth_rhythm_settings")],
             "settings": [dict(r) for r in run(db, "SELECT * FROM growth_settings")],
@@ -233,6 +234,8 @@ def save_item(db, run, item_id, payload):
     fields = item_fields(db, run, service, kind, payload)
     if kind == "room" and (not fields["lead_id"] or fields["channel"] != "Internal"):
         raise ValueError("Room drafts must be internal and linked to a lead.")
+    if kind == "brief" and fields["channel"] != "Internal":
+        raise ValueError("Internal review briefs cannot be assigned to an external channel.")
     if current is None:
         row = run(db, """INSERT INTO growth_items (service, kind, lead_id, title, body, owner, channel, label, due, due_time, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",

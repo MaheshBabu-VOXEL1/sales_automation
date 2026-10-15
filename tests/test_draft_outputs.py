@@ -132,6 +132,23 @@ class DraftOutputsTest(unittest.TestCase):
             automation.tick(server, datetime(2026, 10, 15, 8, tzinfo=timezone.utc))
             generate.assert_not_called()
 
+    def test_room_refresh_uses_real_updates_without_looping_after_apply(self):
+        day = "2026-10-15"
+        item = self.room()
+        with closing(server.connect()) as db, db:
+            item = growth.save_item(db, server.run, item["id"], {"action": "approve", "revision": item["revision"]})
+            draft_outputs.apply_room(db, server.run, {"item_id": item["id"], "revision": item["revision"], "room_updated_at": ""})
+        self.assertEqual(draft_outputs.room_candidates(server, "bim", day), [])
+        with closing(server.connect()) as db, db:
+            growth.save_lead(db, server.run, self.lead["id"], {"service": "bim", "stage": "proposal", "owner": "Team", "room_notes": "A real scope question was recorded."})
+        candidates = draft_outputs.room_candidates(server, "bim", day)
+        self.assertEqual([c["id"] for c in candidates], [self.lead["id"]])
+        with patch.object(draft_outputs, "generate", return_value=GOOD) as generate:
+            refreshed = draft_outputs.create(server, "bim", "room", self.lead["id"], day=day)
+            self.assertEqual(generate.call_args.args[2]["recorded_stage"], "proposal")
+        self.assertNotEqual(refreshed["id"], item["id"])
+        self.assertEqual(self.sql("SELECT room_notes FROM growth_leads")[0]["room_notes"], "A real scope question was recorded.")
+
 
 if __name__ == "__main__":
     unittest.main()

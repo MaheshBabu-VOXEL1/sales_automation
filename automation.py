@@ -43,14 +43,19 @@ def save(api, db, service, payload):
     # Legacy campaign requests remain valid and preserve unified settings.
     current = api.run(db, "SELECT config FROM agent_campaigns WHERE service=?", (service,)).fetchone()
     previous = json.loads(current["config"]) if current else {}
-    for key in ("quarter", "content_targets", "strategy", "auto_rooms", "auto_linkedin"):
+    for key in ("quarter", "content_targets", "strategy", "auto_rooms", "auto_linkedin", "full_rhythm", "target_accounts", "partner_accounts", "existing_clients", "warm_paths", "approved_proof", "proof_consent"):
         if key in previous:
             config[key] = previous[key]
-    for key in ("auto_rooms", "auto_linkedin"):
+    for key in ("auto_rooms", "auto_linkedin", "full_rhythm", "proof_consent"):
         if key in payload:
             if type(payload[key]) is not bool:
                 raise ValueError("Draft automation settings must be true or false.")
             config[key] = payload[key]
+    for key in ("target_accounts", "partner_accounts", "existing_clients", "warm_paths", "approved_proof"):
+        if key in payload:
+            config[key] = growth.text(payload, key, 3000)
+    if config.get("full_rhythm"):
+        config.update(auto_rooms=True, auto_linkedin=True)
     if "goal" in payload:
         if type(payload["goal"]) is not int or not 0 <= payload["goal"] <= 10000:
             raise ValueError("Sales target must be a whole number from 0 to 10000.")
@@ -72,6 +77,12 @@ def save(api, db, service, payload):
     api.run(db, """INSERT INTO agent_campaigns (service, config, updated_at) VALUES (?, ?, ?)
         ON CONFLICT(service) DO UPDATE SET config=excluded.config, updated_at=excluded.updated_at""",
         (service, json.dumps(config), api.now()))
+    # Changed inputs can release blocked work today, while successful or unknown
+    # paid attempts remain claimed and are never replayed by a settings save.
+    day = datetime.now(timezone.utc).astimezone(growth.IST).date().isoformat()
+    for job in api.run(db, "SELECT job, state, result FROM agent_jobs WHERE service=? AND day=?", (service, day)).fetchall():
+        if job["state"] in ("needs_input", "needs_budget") or json.loads(job["result"] or "{}").get("budget_blocked"):
+            api.run(db, "UPDATE agent_jobs SET state='retry_ready' WHERE service=? AND day=? AND job=?", (service, day, job["job"]))
     growth.event(db, api.run, service, None, None, "campaign_saved", config)
     return config
 
@@ -106,7 +117,8 @@ def claim(api, service, day, job):
         if growth.is_paused(db, api.run, service):
             return False
         return bool(api.run(db, """INSERT INTO agent_jobs (service, day, job, state, updated_at)
-            VALUES (?, ?, ?, 'running', ?) ON CONFLICT(service, day, job) DO NOTHING RETURNING job""",
+            VALUES (?, ?, ?, 'running', ?) ON CONFLICT(service, day, job) DO UPDATE
+            SET state='running', result='', updated_at=excluded.updated_at WHERE agent_jobs.state='retry_ready' RETURNING job""",
             (service, day, job, api.now())).fetchone())
 
 
@@ -157,7 +169,23 @@ def discovery(api, service, config):
         api.search_lock.release()
 
 
-def tick(api, instant=None):
+def _discover_due(api, instant=None):
+    local = (instant or datetime.now(timezone.utc)).astimezone(growth.IST)
+    day, clock = local.date().isoformat(), local.strftime("%H:%M")
+    with closing(api.connect()) as db:
+        campaigns = [dict(r) for r in api.run(db, "SELECT * FROM agent_campaigns")]
+    for row in campaigns:
+        service, config = row["service"], json.loads(row["config"])
+        if day < config["start"] or (config["end"] and day > config["end"]):
+            continue
+        if clock >= config["search_time"] and claim(api, service, day, "discovery"):
+            try:
+                finish(api, service, day, "discovery", "done", discovery(api, service, config))
+            except Exception as exc:
+                finish(api, service, day, "discovery", "needs_you", {"message": safe_error(api, exc), "budget_blocked": isinstance(exc, api.BudgetBlocked)})
+
+
+def _tick_core(api, instant=None):
     local = (instant or datetime.now(timezone.utc)).astimezone(growth.IST)
     day, clock = local.date().isoformat(), local.strftime("%H:%M")
     with closing(api.connect()) as db:
@@ -170,6 +198,8 @@ def tick(api, instant=None):
             with closing(api.connect()) as db, db:
                 if not growth.is_paused(db, api.run, service):
                     for channel, count in config.get("content_targets", {}).items():
+                        if config.get("full_rhythm"):
+                            continue
                         if channel == "LinkedIn" and config.get("auto_linkedin"):
                             continue
                         for index in range(count):
@@ -184,13 +214,8 @@ def tick(api, instant=None):
                                     "body": f"Goal: {config['objective']}\nStrategy: {config.get('strategy', '')}\nCreate a content draft for approval. Publication is not connected."})
                                 api.run(db, "UPDATE agent_jobs SET result=? WHERE service=? AND day=? AND job=?",
                                         (json.dumps({"message": "Content preparation task created; draft and publish manually.", "task_id": item["id"]}), service, day, job))
-        if clock >= config["search_time"] and claim(api, service, day, "discovery"):
-            try:
-                finish(api, service, day, "discovery", "done", discovery(api, service, config))
-            except Exception as exc:
-                finish(api, service, day, "discovery", "needs_you", {"message": safe_error(api, exc)})
         # Public post drafts do not depend on finding a new lead today.
-        if config.get("auto_linkedin") and clock >= "12:00":
+        if config.get("auto_linkedin") and not config.get("full_rhythm") and clock >= "12:00":
             for slot in range(1, config.get("content_targets", {}).get("LinkedIn", 0) + 1):
                 job = f"linkedin:{slot}"
                 if claim(api, service, day, job):
@@ -198,23 +223,19 @@ def tick(api, instant=None):
                         item = draft_outputs.create(api, service, "linkedin", slot=slot, day=day)
                         finish(api, service, day, job, "needs_approval", {"item_id": item["id"], "message": "LinkedIn text drafted. Review in Content or Approvals; not published."})
                     except Exception as exc:
-                        finish(api, service, day, job, "needs_you", {"message": safe_error(api, exc)})
+                        finish(api, service, day, job, "needs_you", {"message": safe_error(api, exc), "budget_blocked": isinstance(exc, api.BudgetBlocked)})
         if config.get("auto_rooms") and clock >= "07:30":
+            candidates = draft_outputs.room_candidates(api, service, day)
             with closing(api.connect()) as db:
-                candidates = api.run(db, """SELECT l.id FROM leads l WHERE l.service=? AND l.ai_screened=1
-                    AND l.review_decision='active' AND l.status<>'not_interested'
-                    AND NOT EXISTS (SELECT 1 FROM growth_items i WHERE i.lead_id=l.id AND i.kind='room' AND i.state IN ('pending', 'approved', 'done'))
-                    AND NOT EXISTS (SELECT 1 FROM growth_leads r WHERE r.lead_id=l.id AND r.room_notes<>'') ORDER BY l.id LIMIT 5""", (service,)).fetchall()
-            with closing(api.connect()) as db:
-                attempts = api.run(db, "SELECT COUNT(*) AS n FROM agent_jobs WHERE service=? AND day=? AND job LIKE ?", (service, day, "room:%")).fetchone()["n"]
+                attempts = api.run(db, "SELECT COUNT(*) AS n FROM agent_jobs WHERE service=? AND day=? AND job LIKE ? AND state<>'retry_ready'", (service, day, "room:%")).fetchone()["n"]
             for lead in candidates[:max(0, 5 - attempts)]:
-                job = f"room:{lead['id']}"
+                job = f"room:{lead['id']}:{lead['context_digest'][:12]}"
                 if claim(api, service, day, job):
                     try:
                         item = draft_outputs.create(api, service, "room", lead_id=lead["id"], day=day)
                         finish(api, service, day, job, "needs_approval", {"item_id": item["id"], "message": "Internal room draft prepared. Review and approve before applying; existing outline unchanged."})
                     except Exception as exc:
-                        finish(api, service, day, job, "needs_you", {"message": safe_error(api, exc)})
+                        finish(api, service, day, job, "needs_you", {"message": safe_error(api, exc), "budget_blocked": isinstance(exc, api.BudgetBlocked)})
         if clock < config["draft_time"]:
             continue
         with closing(api.connect()) as db:
@@ -226,12 +247,12 @@ def tick(api, instant=None):
             eligible = []
             for lead_id in ids:
                 lead = api.run(db, "SELECT id FROM leads WHERE id=? AND service=? AND ai_screened=1 AND review_decision='active' AND status<>'not_interested'", (lead_id, service)).fetchone()
-                prior = api.run(db, "SELECT id FROM growth_items WHERE lead_id=? AND kind='outreach'", (lead_id,)).fetchone()
+                prior = api.run(db, "SELECT id FROM growth_items WHERE lead_id=? AND kind='outreach' AND channel='Email' AND label='First contact'", (lead_id,)).fetchone()
                 if lead and not prior:
                     eligible.append(lead_id)
         # All attempted drafts count toward the daily limit, including failures.
         with closing(api.connect()) as db:
-            attempted = api.run(db, "SELECT COUNT(*) AS n FROM agent_jobs WHERE service=? AND day=? AND job LIKE ?", (service, day, "draft:%")).fetchone()["n"]
+            attempted = api.run(db, "SELECT COUNT(*) AS n FROM agent_jobs WHERE service=? AND day=? AND job LIKE ? AND state<>'retry_ready'", (service, day, "draft:%")).fetchone()["n"]
         for lead_id in eligible[:max(0, 5 - attempted)]:
             job = f"draft:{lead_id}"
             if not claim(api, service, day, job):
@@ -242,10 +263,22 @@ def tick(api, instant=None):
                 item = api.ai_draft_lead(service, lead_id, {"purpose": "First contact", "guidance": guidance})
                 finish(api, service, day, job, "needs_approval", {"item_id": item["id"], "message": "Draft prepared. Review it in Approvals; nothing was sent."})
             except Exception as exc:
-                finish(api, service, day, job, "needs_you", {"message": safe_error(api, exc)})
+                finish(api, service, day, job, "needs_you", {"message": safe_error(api, exc), "budget_blocked": isinstance(exc, api.BudgetBlocked)})
 
 
 def safe_error(api, exc):
     if isinstance(exc, (ValueError, api.BudgetBlocked)):
         return str(exc)[:500]
     return "Provider or storage operation failed. No automatic retry today; inspect provider status and saved results."
+
+
+def tick(api, instant=None):
+    import rhythm_engine
+    # Preserve the original lead-discovery budget priority; research then enriches
+    # the context available to room and message preparation.
+    _discover_due(api, instant)
+    rhythm_engine.tick(api, instant, phase="research")
+    try:
+        _tick_core(api, instant)
+    finally:
+        rhythm_engine.tick(api, instant, phase="drafts")
