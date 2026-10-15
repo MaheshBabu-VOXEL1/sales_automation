@@ -137,7 +137,7 @@ def tick(api, instant=None):
                     eligible.append(lead_id)
         # All attempted drafts count toward the daily limit, including failures.
         with closing(api.connect()) as db:
-            attempted = api.run(db, "SELECT COUNT(*) AS n FROM agent_jobs WHERE service=? AND day=? AND job LIKE 'draft:%'", (service, day)).fetchone()["n"]
+            attempted = api.run(db, "SELECT COUNT(*) AS n FROM agent_jobs WHERE service=? AND day=? AND job LIKE ?", (service, day, "draft:%")).fetchone()["n"]
         for lead_id in eligible[:max(0, 5 - attempted)]:
             job = f"draft:{lead_id}"
             if not claim(api, service, day, job):

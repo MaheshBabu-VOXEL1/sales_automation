@@ -123,7 +123,13 @@ class GrowthTest(unittest.TestCase):
         instant = datetime(2026, 10, 17, 5, tzinfo=timezone.utc)
         def draft(service, lead_id, payload):
             return self.item(service=service, lead_id=lead_id, kind="outreach", body="Hello", channel="Email", label="First contact")
-        with patch.object(automation, "discovery", return_value={"found": 1, "added": 1, "lead_ids": [lead["id"]]}) as discover, patch.object(server, "ai_draft_lead", side_effect=draft) as writer:
+        original_run = server.run
+        def postgres_safe_run(db, statement, values=()):
+            # Psycopg interprets literal percent signs when parameters are supplied.
+            # LIKE patterns must be bound values, not embedded in SQL.
+            self.assertNotIn("%", statement)
+            return original_run(db, statement, values)
+        with patch.object(server, "run", new=postgres_safe_run), patch.object(automation, "discovery", return_value={"found": 1, "added": 1, "lead_ids": [lead["id"]]}) as discover, patch.object(server, "ai_draft_lead", side_effect=draft) as writer:
             automation.tick(server, instant)
             automation.tick(server, instant)
             discover.assert_called_once()
@@ -256,3 +262,4 @@ class GrowthTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
