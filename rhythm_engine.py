@@ -16,6 +16,9 @@ class MissingInput(ValueError):
     pass
 
 
+REUSED = "Existing draft still awaiting review; no new draft was prepared."
+
+
 def init(db, run):
     run(db, """CREATE TABLE IF NOT EXISTS research_snapshots (
         id TEXT PRIMARY KEY, service TEXT NOT NULL, day TEXT NOT NULL,
@@ -123,6 +126,8 @@ def mapping(api, service, config, day):
         name = lead.get("contact_name") or "Name not recorded"
         if "*" in name:
             name = "Provider-obfuscated name; verify before addressing"
+        if ai_draft.contact_domain_mismatch(lead):
+            name += " (email domain differs from the company website; verify employment before addressing)"
         lines += ["\nCompany: " + lead["company"], "Recorded contact: " + name,
                   "Role: " + (lead.get("contact_title") or "Not recorded"),
                   "Source: " + (lead.get("source_url") or "Not recorded"),
@@ -136,9 +141,9 @@ def message(api, service, config, day, lead, kind, channel, label):
     with closing(api.connect()) as db:
         existing = api.run(db, "SELECT * FROM growth_items WHERE service=? AND lead_id=? AND kind='outreach' AND channel=? AND label=? AND state IN ('pending','approved') ORDER BY id DESC", (service, lead["id"], channel, label)).fetchone()
         if existing:
-            return dict(existing)
+            return {**dict(existing), "reused": True}
         sent = [dict(r) for r in api.run(db, "SELECT title, body, updated_at, channel FROM growth_items WHERE lead_id=? AND kind='outreach' AND channel='Email' AND state='done' ORDER BY updated_at DESC LIMIT 2", (lead["id"],))]
-    facts = ai_draft.lead_facts(lead, service, lead.get("room_notes") or "", [])
+    facts = ai_draft.lead_facts(lead, service, lead.get("room_notes") or "", [], ai_draft.campaign_focus(config))
     if kind == "followup":
         facts["recorded_sent_messages"] = sent
         facts["reply_tracking"] = "No automatic reply tracking; do not claim no reply unless recorded by the team."
@@ -171,7 +176,7 @@ def outreach(api, service, config, day):
                 try:
                     item = message(api, service, config, day, lead, kind, channel, "First contact")
                     outputs.append(item["id"])
-                    finish(api, service, day, job, "needs_approval", {"item_id": item["id"], "message": f"{channel} message drafted; not sent. Contact permission must be checked before any delivery."})
+                    finish(api, service, day, job, "needs_approval", {"item_id": item["id"], "message": REUSED if item.get("reused") else f"{channel} message drafted; not sent. Contact permission must be checked before any delivery."})
                 except Exception as exc:
                     finish(api, service, day, job, "needs_you", {"message": error(api, exc)})
     with closing(api.connect()) as db:
@@ -186,7 +191,7 @@ def partner(api, service, config, day, academic=False):
     if not matches:
         raise MissingInput("Add a saved college/university lead for academic partnership drafting." if academic else "List an actual PMC/consultant in Sales Goal → Partner accounts and save that company's lead. No partner relationship will be invented.")
     item = message(api, service, config, day, matches[0], "academic" if academic else "partner", "Email", "Partner")
-    return {"item_ids": [item["id"]], "message": "Partnership discussion drafted from recorded facts; no agreement or prior relationship assumed."}
+    return {"item_ids": [item["id"]], "message": REUSED if item.get("reused") else "Partnership discussion drafted from recorded facts; no agreement or prior relationship assumed."}
 
 
 def followups(api, service, config, day):
@@ -201,7 +206,8 @@ def followups(api, service, config, day):
                         eligible.append(lead)
                 except (TypeError, ValueError):
                     pass
-    ids = [message(api, service, config, day, l, "followup", "Email", "Follow-up")["id"] for l in eligible[:3]]
+    prepared = [message(api, service, config, day, l, "followup", "Email", "Follow-up") for l in eligible[:3]]
+    ids = [item["id"] for item in prepared]
     if not ids:
         # Preparing call questions is useful even before a follow-up can be justified.
         opportunities = [l for l in leads(api, service) if l.get("stage") in ("meeting", "proposal", "negotiation")]
@@ -209,8 +215,10 @@ def followups(api, service, config, day):
             return {"message": "No recorded sent email older than three days or active proposal/scope call. No follow-up was invented.", "no_action": True}
         lead = opportunities[0]
         api.reserve_ai_draft(operation="scope_preparation")
-        output = draft_outputs.generate("proposal", service, ai_draft.lead_facts(lead, service, lead.get("room_notes") or "", []), config["objective"])
+        output = draft_outputs.generate("proposal", service, ai_draft.lead_facts(lead, service, lead.get("room_notes") or "", [], ai_draft.campaign_focus(config)), config["objective"])
         ids = [save_item(api, service, day, output["title"], output["body"], label="Call preparation", lead_id=lead["id"], model=output["model"])["id"]]
+    if prepared and all(item.get("reused") for item in prepared):
+        return {"item_ids": ids, "message": REUSED}
     return {"item_ids": ids, "message": "Follow-up or scope-call preparation ready for review. No automatic reply or meeting confirmation assumed."}
 
 
@@ -220,7 +228,7 @@ def clients(api, service, config, day):
     if not pool:
         raise MissingInput("No recorded existing clients are available. Add actual customer names in Sales Goal → Existing clients and save their leads (Training: VITALS/XIM clients), or record a real Won opportunity.")
     item = message(api, service, config, day, pool[0], "cross_sell", "Email", "Account")
-    return {"item_ids": [item["id"]], "message": "Next-project or team-training enquiry drafted for a recorded existing customer."}
+    return {"item_ids": [item["id"]], "message": REUSED if item.get("reused") else "Next-project or team-training enquiry drafted for a recorded existing customer."}
 
 
 def social(api, service, config, day):
@@ -243,12 +251,12 @@ def social(api, service, config, day):
     with closing(api.connect()) as db:
         outputs += [r["id"] for r in api.run(db, "SELECT id FROM growth_items WHERE service=? AND due=? AND kind='content' AND state IN ('pending','approved')", (service, day))]
     proof_missing = not (config.get("approved_proof") and config.get("proof_consent"))
-    if proof_missing:
-        issues.append("No consented proof/trainee-story source is saved. Educational alternatives are reviewable; they are not client proof or a trainee story.")
     notice = f"{len(set(outputs))} social drafts available for review; Instagram/Facebook include editable graphic cards."
     if proof_missing:
+        # Missing team input, not a provider failure: reported as needs_input.
+        issues.append("No consented proof/trainee-story source is saved. Educational alternatives are reviewable; they are not client proof or a trainee story.")
         notice += " Consented proof/story input is still needed for this rhythm activity."
-    return {"item_ids": list(dict.fromkeys(outputs)), "message": notice, "issues": issues, "partial": bool(issues)}
+    return {"item_ids": list(dict.fromkeys(outputs)), "message": notice, "issues": issues, "partial": len(issues) > int(proof_missing), "input_needed": proof_missing}
 
 
 def summary(api, service, day, research_issue=None):
@@ -315,13 +323,15 @@ def tick(api, instant=None, phase="drafts"):
                 else:
                     try:
                         research(api, service, config, day, "evening")
-                        issue = None
+                        issue, missing = None, False
                     except Exception as exc:
-                        issue = error(api, exc)
+                        issue, missing = error(api, exc), isinstance(exc, MissingInput)
                     result = summary(api, service, day, issue)
                     if issue:
-                        result.update(partial=True, issues=[issue])
-                state = "needs_you" if result.get("partial") else "no_action" if result.get("no_action") else "needs_review"
+                        result.update(issues=[issue], **({"input_needed": True} if missing else {"partial": True}))
+                # needs_you is reserved for provider/storage failures; missing team input is needs_input.
+                state = ("needs_you" if result.get("partial") else "needs_input" if result.get("input_needed")
+                         else "no_action" if result.get("no_action") else "needs_review")
                 finish(api, service, day, job, state, result)
             except Exception as exc:
                 state = "needs_budget" if isinstance(exc, api.BudgetBlocked) else "needs_input" if isinstance(exc, MissingInput) else "needs_you"

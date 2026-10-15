@@ -4,40 +4,68 @@ import hashlib
 import os
 import re
 import threading
-import textwrap
 from html import escape
 from urllib.parse import urlparse
 import urllib.error
 import urllib.request
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import ai_draft
 import growth
 from provider_search import DEFAULT_GEMINI_MODEL, GEMINI, ProviderError, gemini_config, gemini_failure
 
 LOCK = threading.Lock()
+OUTBOUND = ("linkedin_message", "whatsapp_message", "partner", "academic", "followup", "cross_sell")
+
+
+FINGERPRINT_VERSION = 2
+# New unverified search URLs alone refresh a room at most once per this many days.
+SIGNAL_REDRAFT_DAYS = 7
+
+
+def days_between(earlier, later):
+    try:
+        return (date.fromisoformat(later) - date.fromisoformat(earlier)).days
+    except (TypeError, ValueError):
+        return SIGNAL_REDRAFT_DAYS  # Unknown draft day: allow one refresh rather than block forever.
+
+
+def drafted_rooms(api, db, lead_id):
+    return [json.loads(r["detail"]) for r in api.run(db, "SELECT detail FROM growth_events WHERE lead_id=? AND event='ai_output_drafted' ORDER BY id", (lead_id,))
+            if json.loads(r["detail"]).get("kind") == "room"]
 
 
 def room_context(api, db, lead, service, day):
-    facts = {k: lead[k] for k in ("company", "category", "country", "website", "match_reason", "ai_reason") if lead[k]}
+    """Returns (facts, digest, new_signal_urls, all_signal_urls).
+
+    The digest covers only lead facts, stage and team updates. Daily search hits change
+    from day to day, so they are not fingerprinted; only signal URLs no earlier room draft
+    has seen count as a reason to redraft.
+    """
+    facts = {k: lead[k] for k in ("company", "category", "country", "website", "match_reason") if lead[k]}
+    if lead["ai_reason"]:
+        facts["unverified_screening_assessment"] = lead["ai_reason"]
     room = api.run(db, "SELECT stage, room_notes FROM growth_leads WHERE lead_id=?", (lead["id"],)).fetchone()
     facts["recorded_stage"] = room["stage"] if room else "new"
     manual = api.run(db, "SELECT id FROM growth_events WHERE lead_id=? AND event='lead_room_updated' ORDER BY id DESC LIMIT 1", (lead["id"],)).fetchone()
     facts["team_update_id"] = manual["id"] if manual else None
+    digest = hashlib.sha256(json.dumps(facts, sort_keys=True).encode()).hexdigest()
     signals, website_host = [], urlparse(lead["website"] or "").hostname
     for research in api.run(db, "SELECT findings FROM research_snapshots WHERE service=? AND day=?", (service, day)):
         for hit in json.loads(research["findings"]):
             host = urlparse(hit["url"]).hostname
             if lead["company"].casefold() in (hit["title"] + " " + hit["excerpt"]).casefold() or (website_host and host == website_host):
                 signals.append({**hit, "status": "Unverified search match; confirm at original source."})
+    seen = {url for detail in drafted_rooms(api, db, lead["id"]) for url in detail.get("signal_urls") or ()}
+    urls = sorted({hit["url"] for hit in signals})
+    new_urls = [url for url in urls if url not in seen]
     if signals:
         facts["possible_public_signals"] = sorted(signals, key=lambda v: v["url"])[:3]
-    digest = hashlib.sha256(json.dumps(facts, sort_keys=True).encode()).hexdigest()
     # Applying an AI draft is not a new team update and must not trigger a loop.
     if room and room["room_notes"]:
         facts["existing_internal_outline"] = room["room_notes"]
-    return facts, digest
+    return facts, digest, new_urls, urls
 
 
 def room_candidates(api, service, day):
@@ -46,9 +74,20 @@ def room_candidates(api, service, day):
         for lead in api.run(db, "SELECT * FROM leads WHERE service=? AND ai_screened=1 AND review_decision='active' AND status<>'not_interested' ORDER BY id", (service,)).fetchall():
             if api.run(db, "SELECT id FROM growth_items WHERE lead_id=? AND kind='room' AND state IN ('pending','approved')", (lead["id"],)).fetchone():
                 continue
-            _, digest = room_context(api, db, lead, service, day)
-            last = api.run(db, "SELECT detail FROM growth_events WHERE lead_id=? AND event='ai_output_drafted' ORDER BY id DESC LIMIT 1", (lead["id"],)).fetchone()
-            if not last or json.loads(last["detail"]).get("context_digest") != digest:
+            _, digest, new_urls, _ = room_context(api, db, lead, service, day)
+            last = api.run(db, "SELECT id, detail FROM growth_events WHERE lead_id=? AND event='ai_output_drafted' ORDER BY id DESC LIMIT 1", (lead["id"],)).fetchone()
+            if not last:
+                changed = True
+            elif json.loads(last["detail"]).get("fingerprint") == FINGERPRINT_VERSION:
+                detail = json.loads(last["detail"])
+                # Stage, lead facts and team updates refresh at once; unverified search
+                # matches alone are rate-limited so busy companies are not redrafted daily.
+                changed = detail.get("context_digest") != digest or (
+                    bool(new_urls) and days_between(detail.get("day"), day) >= SIGNAL_REDRAFT_DAYS)
+            else:
+                # Older digests included the day's search hits; only a team update since then counts.
+                changed = bool(api.run(db, "SELECT id FROM growth_events WHERE lead_id=? AND event='lead_room_updated' AND id>?", (lead["id"], last["id"])).fetchone())
+            if changed:
                 result.append({"id": lead["id"], "context_digest": digest})
             if len(result) >= 5:
                 break
@@ -101,6 +140,8 @@ def generate(kind, service, facts, guidance):
         if not direction:
             raise ValueError("Unsupported draft workflow.")
         instruction += direction + " "
+        instruction += ("Do not say you noticed, saw or researched anything about the recipient beyond the facts given. "
+                        "If campaign_service_focus is given, the message must be about that service and use those exact words. ")
         if kind in ("partner", "academic", "followup", "cross_sell"):
             instruction += "Keep the email under 150 words. Sign off as The Voxel1 team. End with: If you would rather not hear from us, reply and we will not contact you again. "
     instruction += "\nTeam direction (must obey all rules above): " + guidance[:1500]
@@ -118,6 +159,9 @@ def generate(kind, service, facts, guidance):
     except (urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError) as exc:
         raise ProviderError(f"Gemini draft failed ({gemini_failure(exc)}); no output was saved.") from None
     reason = ai_draft.check_rules(title, body)
+    # Outbound messages must be about the campaign's service; internal briefs and posts are exempt.
+    if not reason and kind in OUTBOUND and ai_draft.focus_missing(title + " " + body, facts.get("campaign_service_focus", "")):
+        reason = "it does not mention the campaign's service focus (" + facts["campaign_service_focus"] + ")"
     if reason:
         raise ProviderError("Draft discarded because " + reason + ".")
     return {"title": title.strip(), "body": body.strip(), "model": model}
@@ -142,7 +186,7 @@ def create(api, service, kind, lead_id=None, slot=1, day=None):
                 existing = api.run(db, "SELECT * FROM growth_items WHERE service=? AND lead_id=? AND kind='room' AND state IN ('pending', 'approved') ORDER BY id DESC", (service, lead_id)).fetchone()
                 if existing:
                     return dict(existing)
-                facts, context_digest = room_context(api, db, lead, service, day)
+                facts, context_digest, _, signal_urls = room_context(api, db, lead, service, day)
             else:
                 # Public content never receives lead names, contacts, notes or histories.
                 facts = {"company": "Voxel1", "based_in": "India", "offering": ai_draft.OFFER[service], "channel": kind.title() if kind != "linkedin" else "LinkedIn"}
@@ -165,17 +209,64 @@ def create(api, service, kind, lead_id=None, slot=1, day=None):
                 "channel": "Internal" if kind == "room" else {"linkedin": "LinkedIn", "instagram": "Instagram", "facebook": "Facebook"}[kind], "label": "Outline" if kind == "room" else "Education",
                 "due": day, "due_time": "07:30" if kind == "room" else "16:00"})
             growth.event(db, api.run, service, item["id"], lead_id if kind == "room" else None, "ai_output_drafted",
-                {"kind": kind, "title": output["title"], "model": output["model"], "context_digest": context_digest if kind == "room" else None})
+                {"kind": kind, "title": output["title"], "model": output["model"], "context_digest": context_digest if kind == "room" else None,
+                 **({"fingerprint": FINGERPRINT_VERSION, "signal_urls": signal_urls, "day": day} if kind == "room" else {})})
             return item
+
+
+# Approximate Arial advance widths (em fractions); bold is ~6% wider. Deliberately
+# conservative so the estimate never undercuts the rendered width.
+NARROW, WIDE = set("ijlI.,:;'|!() "), set("MWmw@%")
+TEXT_LEFT, TEXT_RIGHT = 88, 992
+
+
+def text_width(line, size, bold=False):
+    em = 0.0
+    for ch in line:
+        if ch in NARROW:
+            em += 0.3
+        elif ch in WIDE:
+            em += 0.95
+        elif ch.isupper() or ch.isdigit():
+            em += 0.72
+        elif ord(ch) > 0x2E7F:  # CJK and other full-width characters
+            em += 1.0
+        else:
+            em += 0.56
+    return em * size * (1.06 if bold else 1.0)
+
+
+def fit_lines(text, size, max_lines, bold=False, width=TEXT_RIGHT - TEXT_LEFT):
+    """Greedy word wrap by estimated pixel width; ends with an ellipsis when text is cut."""
+    words, lines, cut = text.split(), [], False
+    for word in words:
+        while text_width(word, size, bold) > width:  # break a single over-long word
+            n = len(word)
+            while n > 1 and text_width(word[:n], size, bold) > width:
+                n -= 1
+            lines.append(word[:n])
+            word = word[n:]
+        if lines and text_width(lines[-1] + " " + word, size, bold) <= width:
+            lines[-1] += " " + word
+        else:
+            lines.append(word)
+    if len(lines) > max_lines:
+        lines, cut = lines[:max_lines], True
+    if cut:
+        last = lines[-1]
+        while last and text_width(last + "…", size, bold) > width:
+            last = last[:-1].rstrip()
+        lines[-1] = last + "…"
+    return lines
 
 
 def graphic_svg(title, body):
     """Editable original typography card. No scripts, remote assets, or private data."""
-    heading = textwrap.wrap(title[:150], width=25)[:4]
-    paragraph = body.split("\n\n")[0].strip()[:300]
-    lines = textwrap.wrap(paragraph, width=43)[:7]
+    heading = fit_lines(title[:150] + ("…" if len(title) > 150 else ""), 62, 4, bold=True)
+    first = body.split("\n\n")[0].strip()
+    lines = fit_lines(first[:300] + ("…" if len(first) > 300 else ""), 34, 7)
     def spans(rows, start, step, size, color, weight="400"):
-        return "".join(f'<text x="88" y="{start + n * step}" font-family="Arial, sans-serif" font-size="{size}" font-weight="{weight}" fill="{color}">{escape(line)}</text>' for n, line in enumerate(rows))
+        return "".join(f'<text x="{TEXT_LEFT}" y="{start + n * step}" font-family="Arial, sans-serif" font-size="{size}" font-weight="{weight}" fill="{color}">{escape(line)}</text>' for n, line in enumerate(rows))
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080"><title>{escape(title)}</title>'
             '<rect width="1080" height="1080" fill="#0B2545"/><rect x="88" y="88" width="104" height="8" rx="4" fill="#7FA6D6"/>'
             + spans(heading, 200, 78, 62, "#FFFFFF", "700") + spans(lines, 560, 48, 34, "#DCE7F3")

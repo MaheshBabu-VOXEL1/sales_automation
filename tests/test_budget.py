@@ -88,7 +88,7 @@ class BudgetTest(unittest.TestCase):
         self.assertEqual(budget["searches_used"], 1)
         self.assertEqual(budget["recent"][0]["status"], "completed")
         with server.connect() as db:
-            rows = [tuple(row) for row in server.run(db, "SELECT provider, operation FROM provider_usage ORDER BY id")]
+            rows = [(row["provider"], row["operation"]) for row in server.run(db, "SELECT provider, operation FROM provider_usage ORDER BY id")]
         self.assertEqual(rows, [("apollo", "company_search"), ("brave", "web_search"), ("apollo", "people_search")])
 
     def test_exhausted_cap_blocks_next_search_before_any_request(self):

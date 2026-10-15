@@ -14,6 +14,7 @@ import binascii
 import hmac
 import secrets
 import sqlite3
+import subprocess
 import threading
 import time
 import logging
@@ -148,6 +149,9 @@ def init_db() -> None:
         automation.init(db, run)
         rhythm_engine.init(db, run)
         outlook.init(db, run)
+        run(db, """CREATE TABLE IF NOT EXISTS worker_heartbeat (
+            name TEXT PRIMARY KEY, last_tick TEXT NOT NULL, last_ok TEXT NOT NULL DEFAULT '',
+            last_error TEXT NOT NULL DEFAULT '', last_error_at TEXT NOT NULL DEFAULT '')""")
         run(db, f"""CREATE TABLE IF NOT EXISTS leads (
             id {identity} PRIMARY KEY,
             service TEXT NOT NULL, source_id TEXT NOT NULL,
@@ -384,12 +388,14 @@ def ai_draft_lead(service: str, lead_id: int, payload: dict) -> dict:
         if growth.is_paused(db, run, service):
             raise ValueError("This workspace is paused. Resume it before drafting.")
         room = run(db, "SELECT room_notes FROM growth_leads WHERE lead_id=?", (lead_id,)).fetchone()
+        campaign = run(db, "SELECT config FROM agent_campaigns WHERE service=?", (service,)).fetchone()
+        focus = ai_draft.campaign_focus(json.loads(campaign["config"]) if campaign else {})
         earlier = [{"subject": r["title"], "status": r["state"], "text": r["body"][:600]}
                    for r in run(db, "SELECT title, body, state FROM growth_items WHERE lead_id=? AND kind='outreach' AND state IN ('approved', 'done') ORDER BY id DESC LIMIT 3", (lead_id,))]
     if purpose == "Follow-up" and not earlier:
         raise ValueError("There is no approved or sent message to follow up on yet. Draft a first contact instead.")
     reserve_ai_draft()
-    draft = ai_draft.write_draft(dict(lead), service, purpose, room["room_notes"] if room else "", earlier, guidance.strip())
+    draft = ai_draft.write_draft(dict(lead), service, purpose, room["room_notes"] if room else "", earlier, guidance.strip(), focus)
     with connect() as db:
         item = growth.save_item(db, run, None, {"service": service, "kind": "outreach", "lead_id": lead_id, "title": draft["title"],
                                                 "body": draft["body"], "channel": "Email", "label": purpose, "due": datetime.now(timezone.utc).strftime("%Y-%m-%d")})
@@ -659,6 +665,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        if path == "/api/version":
+            # Unauthenticated so an uptime check can confirm the deployed build; no secrets or data.
+            return self.respond(200, {"commit": git_commit()})
         if path == "/login":
             body = (ROOT / "web" / "login.html").read_bytes()
             self.send_response(200)
@@ -709,6 +718,8 @@ class Handler(BaseHTTPRequestHandler):
             with connect() as db:
                 snapshot = growth.snapshot(db, run)
                 snapshot["outlook"] = outlook.status(db, run)
+                beat = run(db, "SELECT last_tick, last_ok, last_error, last_error_at FROM worker_heartbeat WHERE name='rhythm'").fetchone()
+                snapshot["worker"] = {**(dict(beat) if beat else {}), "commit": git_commit()}
                 required = ("APOLLO_API_KEY", "BRAVE_SEARCH_API_KEY", "GEMINI_API_KEY",
                             "VOXEL1_MONTHLY_SEARCH_LIMIT", "VOXEL1_MONTHLY_APOLLO_REQUESTS",
                             "VOXEL1_MONTHLY_BRAVE_REQUESTS", "VOXEL1_MONTHLY_GEMINI_REQUESTS")
@@ -758,11 +769,23 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError) as exc:
             self.respond(400, {"error": str(exc)})
 
+    def client_ip(self) -> str:
+        """Address for the login limiter. Behind Render's proxy every request arrives from the
+        proxy, so use the X-Forwarded-For entry appended by the trusted hop instead."""
+        direct = getattr(self, "client_address", ("unknown",))[0]
+        try:
+            hops = int(os.environ.get("VOXEL1_TRUSTED_PROXY_HOPS", "1" if os.environ.get("RENDER") else "0"))
+        except ValueError:
+            hops = 0
+        chain = [v.strip() for v in self.headers.get("X-Forwarded-For", "").split(",") if v.strip()]
+        # Entries left of the trusted hops are client-supplied and could be spoofed.
+        return chain[-hops] if hops > 0 and len(chain) >= hops else direct
+
     def do_POST(self) -> None:
         if urllib.parse.urlparse(self.path).path == "/api/login":
             if not self.same_origin_write():
                 return
-            remote = getattr(self, "client_address", ("unknown",))[0]
+            remote = self.client_ip()
             with session_lock:
                 recent = [attempt for attempt in failed_logins.get(remote, []) if time.time() - attempt < 60]
                 failed_logins[remote] = recent
@@ -970,18 +993,66 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
 
+_commit = None
+
+
+def git_commit() -> str:
+    """Deployed commit: Render's RENDER_GIT_COMMIT, else the local checkout's HEAD."""
+    global _commit
+    if _commit is None:
+        _commit = os.environ.get("RENDER_GIT_COMMIT", "")
+        if not _commit:
+            try:
+                _commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=5).stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                _commit = ""
+    return _commit or "unknown"
+
+
+def record_heartbeat(error: str = "") -> None:
+    """Persist the worker's last tick so the UI can show whether planning is still running."""
+    stamp = now()
+    try:
+        with closing(connect()) as db:
+            with db:
+                run(db, """INSERT INTO worker_heartbeat (name, last_tick, last_ok, last_error, last_error_at) VALUES ('rhythm', ?, ?, ?, ?)
+                    ON CONFLICT(name) DO UPDATE SET last_tick=excluded.last_tick,
+                    last_ok=CASE WHEN excluded.last_error='' THEN excluded.last_ok ELSE worker_heartbeat.last_ok END,
+                    last_error=CASE WHEN excluded.last_error='' THEN worker_heartbeat.last_error ELSE excluded.last_error END,
+                    last_error_at=CASE WHEN excluded.last_error='' THEN worker_heartbeat.last_error_at ELSE excluded.last_error_at END""",
+                    (stamp, "" if error else stamp, error[:500], stamp if error else ""))
+    except Exception:
+        logging.exception("Could not record the worker heartbeat.")
+
+
+def worker_tick() -> None:
+    """One planning pass. Each step runs on its own so one failure does not skip the others."""
+    steps = [("growth.tick_rhythms", _tick_rhythms), ("automation.tick", lambda: automation.tick(sys.modules[__name__]))]
+    if not PUBLIC_NO_AUTH and AUTH_USER and AUTH_PASSWORD:
+        steps.append(("outlook.tick", lambda: outlook.tick(sys.modules[__name__])))
+    failed = []
+    for name, step in steps:
+        try:
+            step()
+        except Exception as exc:
+            logging.exception("Worker step %s failed (commit %s); will retry in 30 seconds.", name, git_commit())
+            failed.append(f"{name}: {type(exc).__name__}: {exc}")
+    record_heartbeat("; ".join(failed))
+
+
+def _tick_rhythms() -> None:
+    with closing(connect()) as db:
+        with db:
+            growth.tick_rhythms(db, run)
+
+
 def rhythm_worker(stop):
     """Plan enabled workspaces even when no browser is open."""
     while not stop.is_set():
         try:
-            with closing(connect()) as db:
-                with db:
-                    growth.tick_rhythms(db, run)
-            automation.tick(sys.modules[__name__])
-            if not PUBLIC_NO_AUTH and AUTH_USER and AUTH_PASSWORD:
-                outlook.tick(sys.modules[__name__])
+            worker_tick()
         except Exception:
-            logging.error("Daily planning failed; will retry in 30 seconds.")
+            logging.exception("Worker tick failed; will retry in 30 seconds.")
         stop.wait(30)
 
 

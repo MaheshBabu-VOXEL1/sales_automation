@@ -40,7 +40,9 @@ class RhythmEngineTest(unittest.TestCase):
 
     def sql(self, statement, values=()):
         with closing(server.connect()) as db, db:
-            return [dict(r) for r in server.run(db, statement, values)]
+            cursor = server.run(db, statement, values)
+            # PostgreSQL cursors for INSERT/UPDATE have no rows to iterate; SQLite's are empty.
+            return [dict(r) for r in cursor] if cursor.description else []
 
     def configure(self, service):
         with closing(server.connect()) as db, db:

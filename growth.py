@@ -200,6 +200,9 @@ def save_item(db, run, item_id, payload):
         current = dict(current)
         if type(payload.get("revision")) is not int or payload["revision"] != current["revision"]:
             raise Conflict("This item changed since you opened it. It has been reloaded; check it and try again.")
+        if current["kind"] == "outreach" and current["state"] == "done":
+            # Follow-ups and the sent history rely on this record; reopening or editing would erase it.
+            raise ValueError("This message is recorded as sent and can no longer be reopened or edited.")
     service = current["service"] if current else payload.get("service")
     if service not in SERVICES:
         raise ValueError("Choose Training or BIM Services.")
@@ -210,6 +213,8 @@ def save_item(db, run, item_id, payload):
         kind, state = current["kind"], current["state"]
         if kind == "room" and action == "complete":
             raise ValueError("Use Apply to room to apply an approved room draft.")
+        if action == "complete" and kind == "brief":
+            raise ValueError("Briefs are reviewed, not completed. Use Mark reviewed.")
         if action == "approve" and (kind == "task" or not current["body"].strip()):
             raise ValueError("Only a content or outreach draft with text can be approved.")
         if action == "complete" and kind != "task" and state != "approved":

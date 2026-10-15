@@ -1,6 +1,8 @@
 """Persistent, bounded discovery-to-draft jobs. No external delivery."""
 import json
+import logging
 import re
+import sys
 from contextlib import closing
 from datetime import datetime, timezone
 
@@ -43,7 +45,7 @@ def save(api, db, service, payload):
     # Legacy campaign requests remain valid and preserve unified settings.
     current = api.run(db, "SELECT config FROM agent_campaigns WHERE service=?", (service,)).fetchone()
     previous = json.loads(current["config"]) if current else {}
-    for key in ("quarter", "content_targets", "strategy", "auto_rooms", "auto_linkedin", "full_rhythm", "target_accounts", "partner_accounts", "existing_clients", "warm_paths", "approved_proof", "proof_consent"):
+    for key in ("quarter", "content_targets", "strategy", "auto_rooms", "auto_linkedin", "full_rhythm", "target_accounts", "partner_accounts", "existing_clients", "warm_paths", "approved_proof", "proof_consent", "service_focus"):
         if key in previous:
             config[key] = previous[key]
     for key in ("auto_rooms", "auto_linkedin", "full_rhythm", "proof_consent"):
@@ -54,6 +56,9 @@ def save(api, db, service, payload):
     for key in ("target_accounts", "partner_accounts", "existing_clients", "warm_paths", "approved_proof"):
         if key in payload:
             config[key] = growth.text(payload, key, 3000)
+    if "service_focus" in payload:
+        # Required wording for outbound drafts; separate from optional search keywords.
+        config["service_focus"] = " ".join(growth.text(payload, "service_focus", 200).split())
     if config.get("full_rhythm"):
         config.update(auto_rooms=True, auto_linkedin=True)
     if "goal" in payload:
@@ -80,8 +85,13 @@ def save(api, db, service, payload):
     # Changed inputs can release blocked work today, while successful or unknown
     # paid attempts remain claimed and are never replayed by a settings save.
     day = datetime.now(timezone.utc).astimezone(growth.IST).date().isoformat()
+    # A job that already saved outputs (e.g. social drafts or a daily summary that
+    # still flags missing proof/research input) is not re-run: that would duplicate them.
     for job in api.run(db, "SELECT job, state, result FROM agent_jobs WHERE service=? AND day=?", (service, day)).fetchall():
-        if job["state"] in ("needs_input", "needs_budget") or json.loads(job["result"] or "{}").get("budget_blocked"):
+        result = json.loads(job["result"] or "{}")
+        if result.get("item_ids"):
+            continue
+        if job["state"] in ("needs_input", "needs_budget") or result.get("budget_blocked"):
             api.run(db, "UPDATE agent_jobs SET state='retry_ready' WHERE service=? AND day=? AND job=?", (service, day, job["job"]))
     growth.event(db, api.run, service, None, None, "campaign_saved", config)
     return config
@@ -123,6 +133,10 @@ def claim(api, service, day, job):
 
 
 def finish(api, service, day, job, state, result):
+    failure = sys.exc_info()[1]
+    if state == "needs_you" and failure is not None:
+        # Called from an except block: keep the traceback that the stored message hides.
+        logging.error("Job %s for %s on %s failed: %s", job, service, day, result.get("message", ""), exc_info=failure)
     with closing(api.connect()) as db, db:
         api.run(db, "UPDATE agent_jobs SET state=?, result=?, updated_at=? WHERE service=? AND day=? AND job=?",
                 (state, json.dumps(result), api.now(), service, day, job))

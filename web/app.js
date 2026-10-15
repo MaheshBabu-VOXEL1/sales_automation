@@ -20,6 +20,26 @@ const S = {
 };
 
 const $ = (id) => document.getElementById(id);
+// Mirrors ai_draft.base_domain: registrable part of a host without a public-suffix list.
+const FREE_MAIL = ["gmail", "googlemail", "yahoo", "hotmail", "outlook", "live", "msn", "icloud", "aol", "proton", "protonmail", "zoho", "yandex", "mail", "gmx", "rediffmail"];
+const baseDomain = (host) => {
+  const labels = String(host || "").toLowerCase().replace(/^\.+|\.+$/g, "").split(".").filter(Boolean);
+  if (labels[0] === "www") labels.shift();
+  const n = labels.length;
+  const keep = n >= 3 && labels[n - 1].length === 2 && ["co", "com", "org", "net", "ac", "gov", "edu", "gob", "nic"].includes(labels[n - 2]) ? 3 : 2;
+  return labels.slice(-keep).join(".");
+};
+const domainMismatch = (l) => {
+  const email = String(l.email || "").trim(), web = String(l.website || "").trim();
+  if (!email.includes("@") || !web) return false;
+  let host = "";
+  try { host = new URL(web.includes("//") ? web : `https://${web}`).hostname; } catch { return false; }
+  if (!host) return false;
+  const [a, b] = [baseDomain(email.split("@").pop()), baseDomain(host)];
+  // Mirrors ai_draft.related_domains: only the same registrable domain counts; similar names prove nothing.
+  if (FREE_MAIL.includes(a.split(".")[0])) return true;
+  return a !== b;
+};
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const safeUrl = (value) => { try { const u = new URL(value); return ["https:", "http:"].includes(u.protocol) ? u.href : null; } catch { return null; } };
 const svc = (id) => SERVICES.find((s) => s.id === id);
@@ -134,6 +154,9 @@ function itemButtons(i) {
       b.push(queued ? `<span class="note">Outlook: ${esc(queued.state)}</span>` : `<button class="btn pri" data-item="outlook-send" data-id="${id}">Send with Outlook</button>`);
     }
     b.push(`<button class="btn" data-item="reopen" data-id="${id}">Reopen</button>`);
+  } else if (i.kind === "outreach" && i.state === "done") {
+    // The sent record drives follow-ups and history, so it cannot be reopened or edited.
+    b.push(`<span class="note">Recorded as sent; locked</span>`);
   } else {
     b.push(`<button class="btn" data-item="reopen" data-id="${id}">Reopen</button>`);
   }
@@ -211,6 +234,16 @@ function todayRows(id) {
   )).sort(byDue);
 }
 
+function workerStatus() {
+  const w = S.growth.worker || {};
+  if (!w.last_tick) return '<p class="blocked">Background worker: no tick recorded yet. Scheduled drafts only run while the server is awake.</p>';
+  const minutes = Math.round((Date.now() - new Date(w.last_tick).getTime()) / 60000);
+  const when = `${new Date(w.last_tick).toLocaleString(undefined, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} (${minutes < 1 ? "just now" : `${minutes} min ago`})`;
+  const failing = w.last_error && (!w.last_ok || w.last_error_at >= w.last_ok);
+  const stale = minutes > 5;
+  return `<p class="${stale || failing ? "blocked" : "note"}">Last worker tick: ${esc(when)}${stale ? ". The worker looks stopped or asleep; scheduled jobs will not run." : ""}${failing ? ` Last tick had errors: ${esc(w.last_error)}` : ""}${w.commit ? ` <span class="muted">Build ${esc(String(w.commit).slice(0, 7))}</span>` : ""}</p>`;
+}
+
 function agentPanel(s) {
   const campaign = S.growth.campaigns.find((c) => c.service === s.id);
   const jobs = S.growth.jobs.filter((j) => j.service === s.id);
@@ -218,7 +251,7 @@ function agentPanel(s) {
   const meetings = activeLeads(s.id).filter((l) => detail(l.id).stage === "meeting").length;
   return `<section class="panel"><div class="panel-h"><div><h2>Live agent workflow</h2><p class="note">${campaign ? `${esc(campaign.objective)} · Discovery ${esc(campaign.search_time)} / drafts ${esc(campaign.draft_time)} IST, every day. ${paused(s.id) ? "Paused." : "Active during campaign dates."}` : "Set a Sales Goal to start scheduled lead discovery and approval-ready drafts."}</p></div><button class="btn pri" data-act="campaign">${campaign ? "Edit Sales Goal" : "Set Sales Goal"}</button></div>
     <div class="panel-b"><p class="note">${activeLeads(s.id).length} active leads · ${messages.filter((i) => i.state === "pending").length} messages awaiting approval · ${messages.filter((i) => i.state === "done").length} recorded sent · ${meetings} currently at meeting stage · ${wonCount(s.id)} won${campaign?.quarter ? ` in ${esc(campaign.quarter)}` : " (all time)"}. Lead, message and meeting counts are service-wide.</p>${campaign?.content_targets ? `<p class="note">Daily content targets: ${Object.entries(campaign.content_targets).map(([channel, count]) => `${esc(channel)} ${count}`).join(" · ")}. ${campaign.full_rhythm ? "Complete draft rhythm enabled: see per-activity status below. Instagram/Facebook include editable graphic cards." : `${campaign.auto_linkedin ? "AI LinkedIn drafts enabled from 12:00 IST." : "LinkedIn preparation is manual."} ${campaign.auto_rooms ? "AI room drafts enabled from 07:30 IST." : "Room preparation is manual."} Other social content remains manual.`}</p>` : ""}</div>
-    <div class="panel-b">${S.growth.automation_missing?.length ? `<p class="blocked">Server setup needed: ${S.growth.automation_missing.map(esc).join(", ")}. Add these server environment settings and restart; never paste API keys into goal fields.</p>` : ""}<p class="note">${campaign?.full_rhythm ? "Runs research, messages, social drafts and reporting within your provider budgets. Signal research requires a Brave plan with storage rights. Missing data and limits appear per activity." : "Uses Apollo, Brave and Gemini within server budgets. Up to one discovery and five email draft attempts per day."} Draft preparation sends or publishes nothing. The hosting server must stay running. <button class="linkish" data-act="refresh-jobs">Refresh results</button></p></div>
+    <div class="panel-b">${S.growth.automation_missing?.length ? `<p class="blocked">Server setup needed: ${S.growth.automation_missing.map(esc).join(", ")}. Add these server environment settings and restart; never paste API keys into goal fields.</p>` : ""}<p class="note">${campaign?.full_rhythm ? "Runs research, messages, social drafts and reporting within your provider budgets. Signal research requires a Brave plan with storage rights. Missing data and limits appear per activity." : "Uses Apollo, Brave and Gemini within server budgets. Up to one discovery and five email draft attempts per day."} Draft preparation sends or publishes nothing. The hosting server must stay running. <button class="linkish" data-act="refresh-jobs">Refresh results</button></p>${workerStatus()}</div>
     <div class="tw"><table><thead><tr><th>Day (IST)</th><th>Job</th><th>Status</th><th>Result</th></tr></thead><tbody>${jobs.length ? jobs.map((j) => {
       const r = JSON.parse(j.result || "{}");
       return `<tr><td>${esc(j.day)}</td><td>${esc(j.job)}</td><td>${esc(j.state.replaceAll("_", " "))}</td><td>${esc(r.message || `${r.found ?? 0} found; ${r.added ?? 0} added`)}${r.warnings?.length ? `<span class="sub">${esc(r.warnings.join(" "))}</span>` : ""}${r.item_id ? '<button class="linkish" data-act="approvals">Review draft in Approvals</button>' : ""}</td></tr>`;
@@ -438,7 +471,7 @@ function room(s, l) {
           <p class="muted">${l.ai_screened ? (l.ai_reason ? `Gemini${l.ai_model ? ` (${esc(l.ai_model)})` : ""}${l.screened_at ? `, ${esc(fmtDate(l.screened_at))}` : ""}: “${esc(l.ai_reason)}” AI judgement, not proof of need.` : "Gemini marked it a plausible buyer earlier; its reason was not recorded.") : "Not screened by Gemini."}</p></div>
         <div><span class="lbl">Source</span><p>${source ? `<a href="${esc(source)}" target="_blank" rel="noopener noreferrer">${sourceLabel} ↗</a>` : esc(sourceLabel)}${web && web !== source ? ` · <a href="${esc(web)}" target="_blank" rel="noopener noreferrer">Website ↗</a>` : ""}</p><p class="muted">${esc(l.category && l.category !== "business" ? l.category : "Industry unconfirmed")}</p></div>
         <div><span class="lbl">Contact</span>${l.contact_name ? `<p><b>${esc(l.contact_name)}</b>${l.contact_title ? `<br><span class="muted">${esc(l.contact_title)}</span>` : ""}${l.contact_name.includes("*") ? '<br><span class="muted">Name partly hidden by provider</span>' : ""}</p>` : '<p class="muted">Decision-maker not found</p>'}
-          ${l.email ? `<p><span class="muted">${apollo ? "Verified work email (Apollo)" : "Email (unverified)"}</span><br><a href="mailto:${encodeURIComponent(l.email)}">${esc(l.email)}</a></p>` : '<p class="muted">Work email unavailable</p>'}
+          ${l.email ? `<p><span class="muted">${apollo ? "Apollo email status: verified" : "Email (unverified)"}</span><br><a href="mailto:${encodeURIComponent(l.email)}">${esc(l.email)}</a></p>${domainMismatch(l) ? '<p class="blocked">This email’s domain doesn’t match the company website. The contact may not work here; confirm before using it. AI drafts won’t address this person by name.</p>' : ""}` : '<p class="muted">Work email unavailable</p>'}
           ${l.phone ? `<p><span class="muted">${apollo ? "Company phone, not a direct line" : "Phone (unverified)"}</span><br><a href="tel:${encodeURIComponent(l.phone)}">${esc(l.phone)}</a></p>` : ""}</div>
         ${active ? `<div><span class="lbl">Interest (after a real response)</span><select id="interest" aria-label="Interest status"><option value="new" ${l.status === "new" ? "selected" : ""}>Needs review</option><option value="interested" ${l.status === "interested" ? "selected" : ""}>Interested</option><option value="not_interested" ${l.status === "not_interested" ? "selected" : ""}>Not interested</option></select>${l.notes ? `<p class="muted">“${esc(l.notes)}”</p>` : ""}</div>
           <div class="actions"><button class="btn" type="button" data-act="review" data-decision="rejected">Reject</button><button class="btn" type="button" data-act="review" data-decision="archived">Archive</button></div>`
@@ -823,7 +856,8 @@ async function act(el) {
           { name: "objective", label: "Service focus and campaign objective", value: c?.objective || t.goal || "", required: true, max: 500, full: true },
           { name: "countries", label: "Target countries (comma separated)", value: t.countries.join(", "), required: true },
           { name: "industries", label: "Industries (comma separated: architecture, construction, engineering, real_estate, education)", value: t.categories.join(", "), required: true, full: true },
-          { name: "keywords", label: "Service keywords", value: t.keywords, max: 500 },
+          { name: "service_focus", label: "Required service focus (every outbound draft must name it, e.g. Scan-to-BIM; comma-separate only if all phrases are required)", value: c?.service_focus || "", max: 200, optional: true, full: true },
+          { name: "keywords", label: "Optional search keywords (discovery and research only; not a drafting requirement)", value: t.keywords, max: 500 },
           { name: "titles", label: "Decision-maker roles", value: t.titles, max: 500 },
           { name: "employee_min", label: "Minimum company size", type: "number", value: t.employee_min, optional: true },
           { name: "employee_max", label: "Maximum company size", type: "number", value: t.employee_max, optional: true },
