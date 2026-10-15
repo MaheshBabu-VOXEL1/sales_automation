@@ -12,6 +12,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
+import knowledge
 from provider_search import DEFAULT_GEMINI_MODEL, GEMINI, ProviderError, gemini_config, gemini_failure
 
 PURPOSES = ("First contact", "Follow-up")
@@ -90,6 +91,8 @@ def lead_facts(lead, service, room_notes, history, service_focus=""):
         "team_notes": room_notes,
         "earlier_messages": history,
         "voxel1_offer": OFFER[service],
+        # Sourced company facts from knowledge/<service>.json; held facts are never included.
+        "voxel1_company_facts": knowledge.facts_for(service, "outreach", service_focus),
         "campaign_service_focus": service_focus,
     }
     return {key: value for key, value in facts.items() if value}
@@ -126,6 +129,7 @@ def write_draft(lead, service, purpose, room_notes="", history=(), guidance="", 
         f"Write a short {purpose.lower()} business email from Voxel1, a BIM company based in India, to the company below. "
         "Use ONLY the facts provided. Do not invent projects, clients, results, numbers, interest, needs or a contact name. "
         "If no contact name is given, open with a neutral greeting. "
+        + (knowledge.INSTRUCTION if facts.get("voxel1_company_facts") else "") +
         "If campaign_service_focus is given, the email must be about that service and use those exact words. "
         "Do not claim to have noticed or researched anything about the company beyond the facts given. "
         "Do not mention prices, discounts, free pilots, trials or other concessions. "
@@ -155,4 +159,5 @@ def write_draft(lead, service, purpose, room_notes="", history=(), guidance="", 
         broken = f"it does not mention the campaign's service focus ({service_focus})"
     if broken:
         raise ProviderError(f"The AI draft was discarded because {broken}. Try again or write it by hand.")
-    return {"title": subject[:SUBJECT_MAX], "body": body[:BODY_MAX], "model": model}
+    return {"title": subject[:SUBJECT_MAX], "body": body[:BODY_MAX], "model": model,
+            "knowledge_pack": knowledge.version(service) if facts.get("voxel1_company_facts") else ""}

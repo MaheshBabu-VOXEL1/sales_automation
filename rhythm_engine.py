@@ -25,7 +25,7 @@ def init(db, run):
         kind TEXT NOT NULL, query TEXT NOT NULL, findings TEXT NOT NULL)""")
 
 
-def save_item(api, service, day, title, body, kind="brief", label="Research", lead_id=None, channel="Internal", model=None):
+def save_item(api, service, day, title, body, kind="brief", label="Research", lead_id=None, channel="Internal", model=None, pack=""):
     with closing(api.connect()) as db, db:
         if growth.is_paused(db, api.run, service):
             raise MissingInput("Paused before saving output; no new draft was stored.")
@@ -37,7 +37,7 @@ def save_item(api, service, day, title, body, kind="brief", label="Research", le
             body = body[:9800] + "\n[Report shortened. Review the job rows for the complete record.]"
         item = growth.save_item(db, api.run, None, {"service": service, "kind": kind, "lead_id": lead_id,
             "title": title[:200], "body": body, "label": label, "channel": channel, "due": day})
-        growth.event(db, api.run, service, item["id"], lead_id, "rhythm_output_created", {"kind": kind, "title": item["title"], "model": model})
+        growth.event(db, api.run, service, item["id"], lead_id, "rhythm_output_created", {"kind": kind, "title": item["title"], "model": model, "knowledge_pack": pack})
         return item
 
 
@@ -153,7 +153,8 @@ def message(api, service, config, day, lead, kind, channel, label):
     automation.active(api, service)
     api.reserve_ai_draft(operation="rhythm_" + kind)
     output = draft_outputs.generate(kind, service, facts, config["objective"] + "\n" + config.get("strategy", ""))
-    return save_item(api, service, day, output["title"], output["body"], kind="outreach", label=label, lead_id=lead["id"], channel=channel, model=output["model"])
+    return save_item(api, service, day, output["title"], output["body"], kind="outreach", label=label, lead_id=lead["id"], channel=channel,
+                     model=output["model"], pack=output.get("knowledge_pack", ""))
 
 
 def outreach(api, service, config, day):

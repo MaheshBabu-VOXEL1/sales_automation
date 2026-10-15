@@ -12,6 +12,7 @@ from contextlib import closing
 from datetime import date, datetime, timezone
 
 import ai_draft
+import knowledge
 import growth
 from provider_search import DEFAULT_GEMINI_MODEL, GEMINI, ProviderError, gemini_config, gemini_failure
 
@@ -62,6 +63,10 @@ def room_context(api, db, lead, service, day):
     new_urls = [url for url in urls if url not in seen]
     if signals:
         facts["possible_public_signals"] = sorted(signals, key=lambda v: v["url"])[:3]
+    # Added after the digest: a knowledge-pack update must not trigger mass room redrafts.
+    company_facts = knowledge.facts_for(service, "room")
+    if company_facts:
+        facts["voxel1_company_facts"] = company_facts
     # Applying an AI draft is not a new team update and must not trigger a loop.
     if room and room["room_notes"]:
         facts["existing_internal_outline"] = room["room_notes"]
@@ -144,6 +149,8 @@ def generate(kind, service, facts, guidance):
                         "If campaign_service_focus is given, the message must be about that service and use those exact words. ")
         if kind in ("partner", "academic", "followup", "cross_sell"):
             instruction += "Keep the email under 150 words. Sign off as The Voxel1 team. End with: If you would rather not hear from us, reply and we will not contact you again. "
+    if facts.get("voxel1_company_facts"):
+        instruction += knowledge.INSTRUCTION
     instruction += "\nTeam direction (must obey all rules above): " + guidance[:1500]
     instruction += "\nFacts: " + json.dumps(facts, ensure_ascii=False)
     request = urllib.request.Request(GEMINI + model + ":generateContent", method="POST",
@@ -164,7 +171,8 @@ def generate(kind, service, facts, guidance):
         reason = "it does not mention the campaign's service focus (" + facts["campaign_service_focus"] + ")"
     if reason:
         raise ProviderError("Draft discarded because " + reason + ".")
-    return {"title": title.strip(), "body": body.strip(), "model": model}
+    return {"title": title.strip(), "body": body.strip(), "model": model,
+            "knowledge_pack": knowledge.version(service) if facts.get("voxel1_company_facts") else ""}
 
 
 def create(api, service, kind, lead_id=None, slot=1, day=None):
@@ -192,6 +200,10 @@ def create(api, service, kind, lead_id=None, slot=1, day=None):
                 facts = {"company": "Voxel1", "based_in": "India", "offering": ai_draft.OFFER[service], "channel": kind.title() if kind != "linkedin" else "LinkedIn"}
                 if config.get("approved_proof") and config.get("proof_consent"):
                     facts["approved_proof"] = config["approved_proof"]
+                # Capability statements only; projects and testimonials are held in the pack.
+                company_facts = knowledge.facts_for(service, "post", ai_draft.campaign_focus(config))
+                if company_facts:
+                    facts["voxel1_company_facts"] = company_facts
         guidance = config.get("objective", "") + "\nStrategy: " + config.get("strategy", "")
         if kind != "room":
             guidance += f"\nPost variation {slot}: " + ("Explain a useful service concept." if slot % 2 else "Discuss a buyer question and practical considerations.")
@@ -209,7 +221,7 @@ def create(api, service, kind, lead_id=None, slot=1, day=None):
                 "channel": "Internal" if kind == "room" else {"linkedin": "LinkedIn", "instagram": "Instagram", "facebook": "Facebook"}[kind], "label": "Outline" if kind == "room" else "Education",
                 "due": day, "due_time": "07:30" if kind == "room" else "16:00"})
             growth.event(db, api.run, service, item["id"], lead_id if kind == "room" else None, "ai_output_drafted",
-                {"kind": kind, "title": output["title"], "model": output["model"], "context_digest": context_digest if kind == "room" else None,
+                {"kind": kind, "title": output["title"], "model": output["model"], "knowledge_pack": output.get("knowledge_pack", ""), "context_digest": context_digest if kind == "room" else None,
                  **({"fingerprint": FINGERPRINT_VERSION, "signal_urls": signal_urls, "day": day} if kind == "room" else {})})
             return item
 

@@ -29,6 +29,7 @@ from http.cookies import SimpleCookie
 import provider_search
 import growth
 import ai_draft
+import knowledge
 import automation
 import outlook
 import draft_outputs
@@ -399,7 +400,8 @@ def ai_draft_lead(service: str, lead_id: int, payload: dict) -> dict:
     with connect() as db:
         item = growth.save_item(db, run, None, {"service": service, "kind": "outreach", "lead_id": lead_id, "title": draft["title"],
                                                 "body": draft["body"], "channel": "Email", "label": purpose, "due": datetime.now(timezone.utc).strftime("%Y-%m-%d")})
-        growth.event(db, run, service, item["id"], lead_id, "ai_drafted", {"title": item["title"], "kind": "outreach", "model": draft["model"], "purpose": purpose})
+        growth.event(db, run, service, item["id"], lead_id, "ai_drafted", {"title": item["title"], "kind": "outreach", "model": draft["model"], "purpose": purpose,
+                                                                            "knowledge_pack": draft.get("knowledge_pack", "")})
     return item
 
 
@@ -720,6 +722,7 @@ class Handler(BaseHTTPRequestHandler):
                 snapshot["outlook"] = outlook.status(db, run)
                 beat = run(db, "SELECT last_tick, last_ok, last_error, last_error_at FROM worker_heartbeat WHERE name='rhythm'").fetchone()
                 snapshot["worker"] = {**(dict(beat) if beat else {}), "commit": git_commit()}
+                snapshot["knowledge"] = {service: knowledge.summary(service) for service in SERVICES}
                 required = ("APOLLO_API_KEY", "BRAVE_SEARCH_API_KEY", "GEMINI_API_KEY",
                             "VOXEL1_MONTHLY_SEARCH_LIMIT", "VOXEL1_MONTHLY_APOLLO_REQUESTS",
                             "VOXEL1_MONTHLY_BRAVE_REQUESTS", "VOXEL1_MONTHLY_GEMINI_REQUESTS")
