@@ -93,6 +93,15 @@ class RhythmEngineTest(unittest.TestCase):
             with closing(server.connect()) as db:
                 self.assertEqual(server.budget_status(db)["used"]["gemini"], 2)
 
+    def test_daily_summary_does_not_report_itself_as_still_running(self):
+        for service, job in (("bim", "rhythm:9"), ("training", "summary")):
+            self.configure(service)
+            day = "2026-10-15"
+            self.assertTrue(automation.claim(server, service, day, job))
+            result = rhythm_engine.summary(server, service, day)
+            saved = self.sql("SELECT body FROM growth_items WHERE id=?", (result["item_ids"][0],))[0]
+            self.assertNotIn(f"- {job}: running", saved["body"])
+
     def test_research_rights_missing_makes_no_network_request_or_retained_result(self):
         self.configure("bim")
         with patch.dict(os.environ, {"BRAVE_SEARCH_STORAGE_ALLOWED": "0"}), patch.object(provider_search, "request_json") as search:
@@ -132,6 +141,18 @@ class RhythmEngineTest(unittest.TestCase):
             rhythm_engine.partner(server, "bim", config, "2026-10-15")
         with self.assertRaises(rhythm_engine.MissingInput):
             rhythm_engine.clients(server, "bim", config, "2026-10-15")
+
+    def test_disabled_partner_activity_needs_no_partner_or_provider_call(self):
+        self.configure("bim")
+        config = json.loads(self.sql("SELECT config FROM agent_campaigns WHERE service='bim'")[0]["config"])
+        config.update(partner_enabled=False, partner_accounts="", accept_budget=True)
+        with closing(server.connect()) as db, db:
+            saved = automation.save(server, db, "bim", config)
+        self.assertIs(saved["partner_enabled"], False)
+        with patch.object(draft_outputs, "generate") as generate:
+            result = rhythm_engine.partner(server, "bim", saved, "2026-10-15")
+        self.assertTrue(result["no_action"])
+        generate.assert_not_called()
 
     def test_approved_unsent_message_does_not_trigger_followup(self):
         lead, sent = self.configure("bim")

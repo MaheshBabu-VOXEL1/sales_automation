@@ -74,7 +74,8 @@ class AiDraftTest(unittest.TestCase):
         with patch.dict(os.environ, ENV), patch.object(ai_draft, "write_draft", return_value=GOOD):
             self.assertEqual(self.draft()[0], 200)
             code, body = self.draft()
-        self.assertEqual(code, 409)
+        self.assertEqual(code, 200)
+        self.assertTrue(body["reused"])
         self.assertEqual(self.usage(), 2)
         with server.connect() as db:
             self.assertEqual(server.run(db, "SELECT COUNT(*) AS n FROM growth_items").fetchone()["n"], 1)
@@ -84,6 +85,15 @@ class AiDraftTest(unittest.TestCase):
             code, body = self.draft({"purpose": "Follow-up"})
         self.assertEqual(code, 400)
         write.assert_not_called()
+
+    def test_first_contact_reuses_pending_output_without_another_request(self):
+        with patch.dict(os.environ, ENV), patch.object(ai_draft, "write_draft", return_value=GOOD) as write:
+            first = self.draft()[1]
+            second = self.draft()[1]
+        self.assertEqual(first["id"], second["id"])
+        self.assertTrue(second["reused"])
+        self.assertEqual(write.call_count, 1)
+        self.assertEqual(self.usage(), 1)
 
     def test_paused_and_rejected_leads_are_refused(self):
         with server.connect() as db:

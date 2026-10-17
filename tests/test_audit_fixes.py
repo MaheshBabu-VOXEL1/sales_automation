@@ -15,6 +15,7 @@ import ai_draft
 import automation
 import draft_outputs
 import growth
+import provider_search
 import rhythm_engine
 import server
 
@@ -63,13 +64,39 @@ class AuditFixesTest(unittest.TestCase):
         self.assertEqual(facts["campaign_service_focus"], "Scan-to-BIM")
 
     def test_write_draft_prompt_has_focus_but_not_screening_note(self):
-        answer = {"subject": "Scan-to-BIM", "body": "Hello,\n\nWould a call help?\n\nThe Voxel1 team"}
+        answer = {"subject": "Scan-to-BIM", "body": "Hello,\n\nWould a call about Scan-to-BIM help?\n\nThe Voxel1 team"}
         response = {"candidates": [{"content": {"parts": [{"text": json.dumps(answer)}]}}]}
         with patch("urllib.request.urlopen", return_value=io.BytesIO(json.dumps(response).encode())) as urlopen:
             ai_draft.write_draft(self.lead_row(), "bim", "First contact", service_focus="Scan-to-BIM")
         prompt = json.loads(urlopen.call_args.args[0].data)["contents"][0]["parts"][0]["text"]
         self.assertNotIn(SCREENING, prompt)
         self.assertIn("Scan-to-BIM", prompt)
+
+    def test_outbound_prompts_mark_strategy_as_internal(self):
+        # Live WhatsApp draft told a prospect Voxel1 would "help win repeat work" (the default BIM strategy).
+        strategy = "Find project teams that need BIM delivery support, and win repeat work from each client."
+        def prompt_for(call):
+            response = {"candidates": [{"content": {"parts": [{"text": json.dumps(answer)}]}}]}
+            with patch("urllib.request.urlopen", return_value=io.BytesIO(json.dumps(response).encode())) as urlopen:
+                call()
+            return json.loads(urlopen.call_args.args[0].data)["contents"][0]["parts"][0]["text"]
+        answer = {"title": "Hi", "body": "Would a call about Scan-to-BIM help?"}
+        for kind in ("linkedin_message", "whatsapp_message", "partner"):
+            self.assertIn(ai_draft.INTERNAL_GUIDANCE, prompt_for(lambda: draft_outputs.generate(kind, "bim", {"campaign_service_focus": "Scan-to-BIM"}, strategy)))
+        # Public posts and internal rooms keep their own wording.
+        self.assertNotIn(ai_draft.INTERNAL_GUIDANCE, prompt_for(lambda: draft_outputs.generate("room", "bim", {}, strategy)))
+        answer = {"subject": "Scan-to-BIM", "body": "Hello,\n\nWould a call about Scan-to-BIM help?\n\nThe Voxel1 team"}
+        self.assertIn(ai_draft.INTERNAL_GUIDANCE, prompt_for(lambda: ai_draft.write_draft(self.lead_row(), "bim", "First contact", guidance=strategy, service_focus="Scan-to-BIM")))
+
+    def test_service_focus_in_title_alone_cannot_pass_email_or_channel_drafts(self):
+        def reply(answer):
+            return io.BytesIO(json.dumps({"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": json.dumps(answer)}]}}]}).encode())
+        body = "Hello, would a short call about our services help?"
+        with patch("urllib.request.urlopen", return_value=reply({"subject":"Scan-to-BIM", "body":body})), self.assertRaisesRegex(provider_search.ProviderError, "service focus"):
+            ai_draft.write_draft(self.lead_row(), "bim", "First contact", service_focus="Scan-to-BIM")
+        for kind in ("linkedin_message", "whatsapp_message", "partner", "academic", "followup", "cross_sell"):
+            with self.subTest(kind=kind), patch("urllib.request.urlopen", return_value=reply({"title":"Scan-to-BIM", "body":body})), self.assertRaisesRegex(provider_search.ProviderError, "service focus"):
+                draft_outputs.generate(kind, "bim", {"campaign_service_focus":"Scan-to-BIM"}, "")
 
     def test_draft_missing_service_focus_is_discarded(self):
         # Regression: Scan-to-BIM was requested in the prompt but never checked in the output.
@@ -79,7 +106,7 @@ class AuditFixesTest(unittest.TestCase):
         generic = {"subject": "BIM delivery support", "body": "Hello,\n\nWe offer BIM modelling. Would a short call help?\n\nThe Voxel1 team"}
         with patch("urllib.request.urlopen", return_value=reply(generic)), self.assertRaisesRegex(server.provider_search.ProviderError, "service focus"):
             ai_draft.write_draft(self.lead_row(), "bim", "First contact", service_focus="Scan-to-BIM, point cloud")
-        spaced = {"subject": "Scan to BIM support", "body": "Hello,\n\nWould a short call help?\n\nThe Voxel1 team"}
+        spaced = {"subject": "Scan to BIM support", "body": "Hello,\n\nWould a short call about Scan to BIM help?\n\nThe Voxel1 team"}
         with patch("urllib.request.urlopen", return_value=reply(spaced)):
             self.assertEqual(ai_draft.write_draft(self.lead_row(), "bim", "First contact", service_focus="Scan-to-BIM")["title"], "Scan to BIM support")
         message = {"title": "Hello", "body": "Would a call about BIM modelling help?"}

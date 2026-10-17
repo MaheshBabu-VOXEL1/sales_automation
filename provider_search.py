@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +26,13 @@ NON_BUYER_INDUSTRIES = {"publishing", "newspapers", "online media", "staffing an
 
 class ProviderError(RuntimeError):
     pass
+
+
+DRAFT_LOCK = threading.RLock()
+
+
+class DraftGenerationError(ProviderError):
+    """A draft request failed before saving any output; an explicit retry is safe."""
 
 
 class BudgetExceeded(ProviderError):
@@ -99,8 +107,55 @@ def gemini_config(model, max_tokens):
     return config
 
 
+class GeminiResponseError(ValueError):
+    """A safe diagnosis without including provider text or private prompt contents."""
+
+
+def gemini_json(payload):
+    """Read the completed answer, excluding thought parts; never repair partial JSON."""
+    if not isinstance(payload, dict):
+        raise GeminiResponseError("Gemini returned an invalid response envelope")
+    feedback = payload.get("promptFeedback")
+    if isinstance(feedback, dict) and feedback.get("blockReason"):
+        raise GeminiResponseError("Gemini blocked the prompt; no usable answer was returned")
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or not candidates or not isinstance(candidates[0], dict):
+        raise GeminiResponseError("Gemini returned no answer candidate")
+    candidate = candidates[0]
+    finish = candidate.get("finishReason")
+    if finish and finish != "STOP":
+        diagnoses = {
+            "MAX_TOKENS": "Gemini reached its output-token limit; the answer may be incomplete",
+            "SAFETY": "Gemini blocked the answer for safety",
+            "RECITATION": "Gemini blocked the answer for recitation",
+        }
+        raise GeminiResponseError(diagnoses.get(finish, "Gemini did not finish with a completed answer"))
+    content = candidate.get("content")
+    parts = content.get("parts") if isinstance(content, dict) else None
+    if not isinstance(parts, list):
+        raise GeminiResponseError("Gemini returned no answer parts")
+    text = "".join(part["text"] for part in parts if isinstance(part, dict)
+                   and not part.get("thought") and isinstance(part.get("text"), str)).strip()
+    if not text:
+        raise GeminiResponseError("Gemini returned no non-thought answer text")
+    # Accept only one fully enclosed JSON fence, never extract an arbitrary object
+    # from prose or invent missing quotes/braces in a truncated answer.
+    fenced = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", text, re.S | re.I)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        answer = json.loads(text)
+    except (ValueError, RecursionError):
+        raise GeminiResponseError("Gemini answer text was not a complete valid JSON object") from None
+    if not isinstance(answer, dict):
+        raise GeminiResponseError("Gemini answer JSON must be an object")
+    return answer
+
+
 def gemini_failure(exc):
     """Short, key-free reason for a failed Gemini call, so the team can see what Google reported."""
+    if isinstance(exc, GeminiResponseError):
+        return str(exc)
     if isinstance(exc, urllib.error.HTTPError):
         try:
             message = json.load(exc).get("error", {}).get("message", "")
@@ -110,6 +165,17 @@ def gemini_failure(exc):
     if isinstance(exc, (urllib.error.URLError, TimeoutError)):
         return "Gemini could not be reached"
     return "Gemini's reply was empty or not valid JSON"
+
+
+def draft_failure(exc):
+    """UI-safe diagnosis. Never expose a raw HTTP body, prompt or model reply."""
+    if isinstance(exc, GeminiResponseError):
+        return str(exc)
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"Gemini returned HTTP {exc.code}; check provider access, quota or availability"
+    if isinstance(exc, (urllib.error.URLError, TimeoutError)):
+        return "Gemini could not be reached or timed out"
+    return "Gemini returned missing or invalid draft fields"
 
 
 def gemini_buyer_candidate(org, service, hits, api_key):
@@ -139,7 +205,7 @@ def gemini_buyer_candidate(org, service, hits, api_key):
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
             payload = json.load(response)
-        answer = json.loads(payload["candidates"][0]["content"]["parts"][0]["text"])
+        answer = gemini_json(payload)
         return answer.get("qualified") is True, str(answer.get("reason") or "").strip()[:240]
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError) as exc:
         raise ProviderError(f"Gemini qualification failed ({gemini_failure(exc)}); no uncertain candidate was saved.") from exc

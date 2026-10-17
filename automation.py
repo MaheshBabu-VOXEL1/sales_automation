@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import sys
+import secrets
 from contextlib import closing
 from datetime import datetime, timezone
 
@@ -18,6 +19,8 @@ def init(db, run):
         service TEXT NOT NULL, day TEXT NOT NULL, job TEXT NOT NULL,
         state TEXT NOT NULL, result TEXT NOT NULL DEFAULT '',
         updated_at TEXT NOT NULL, PRIMARY KEY(service, day, job))""")
+    import job_recovery
+    job_recovery.init(db, run)
 
 
 def save(api, db, service, payload):
@@ -45,10 +48,10 @@ def save(api, db, service, payload):
     # Legacy campaign requests remain valid and preserve unified settings.
     current = api.run(db, "SELECT config FROM agent_campaigns WHERE service=?", (service,)).fetchone()
     previous = json.loads(current["config"]) if current else {}
-    for key in ("quarter", "content_targets", "strategy", "auto_rooms", "auto_linkedin", "full_rhythm", "target_accounts", "partner_accounts", "existing_clients", "warm_paths", "approved_proof", "proof_consent", "service_focus"):
+    for key in ("quarter", "content_targets", "strategy", "auto_rooms", "auto_linkedin", "full_rhythm", "target_accounts", "partner_accounts", "partner_enabled", "existing_clients", "warm_paths", "approved_proof", "proof_consent", "service_focus"):
         if key in previous:
             config[key] = previous[key]
-    for key in ("auto_rooms", "auto_linkedin", "full_rhythm", "proof_consent"):
+    for key in ("auto_rooms", "auto_linkedin", "full_rhythm", "proof_consent", "partner_enabled"):
         if key in payload:
             if type(payload[key]) is not bool:
                 raise ValueError("Draft automation settings must be true or false.")
@@ -124,6 +127,20 @@ def active(api, service):
 
 def claim(api, service, day, job):
     with closing(api.connect()) as db, db:
+        import job_recovery
+        try:
+            _, _, _, pattern = job_recovery.specification(job)
+        except ValueError:
+            pattern = None
+        if pattern:
+            if api.DATABASE_URL:
+                api.run(db, f"SELECT pg_advisory_xact_lock({api.BUDGET_LOCK_ID})")
+            else:
+                db.execute("BEGIN IMMEDIATE")
+            original = api.run(db, "SELECT COUNT(*) AS n FROM agent_jobs WHERE service=? AND day=? AND job LIKE ? AND state<>'retry_ready'", (service, day, pattern)).fetchone()["n"]
+            retried = api.run(db, "SELECT COUNT(*) AS n FROM agent_retry_attempts WHERE service=? AND day=? AND job LIKE ?", (service, day, pattern)).fetchone()["n"]
+            if original + retried >= 5:
+                return False
         if growth.is_paused(db, api.run, service):
             return False
         return bool(api.run(db, """INSERT INTO agent_jobs (service, day, job, state, updated_at)
@@ -134,6 +151,14 @@ def claim(api, service, day, job):
 
 def finish(api, service, day, job, state, result):
     failure = sys.exc_info()[1]
+    if failure is not None and state in ("needs_you", "needs_budget"):
+        result = dict(result)
+        if isinstance(failure, provider_search.DraftGenerationError):
+            result.update(message=str(failure), retry_safe=True, failure_code="draft_generation", failure_token=secrets.token_hex(16))
+        elif isinstance(failure, api.BudgetBlocked):
+            result.update(message=str(failure), budget_blocked=True)
+        else:
+            result.update(retry_safe=False, failure_code="unconfirmed_outcome")
     if state == "needs_you" and failure is not None:
         # Called from an except block: keep the traceback that the stored message hides.
         logging.error("Job %s for %s on %s failed: %s", job, service, day, result.get("message", ""), exc_info=failure)
@@ -281,7 +306,7 @@ def _tick_core(api, instant=None):
 
 
 def safe_error(api, exc):
-    if isinstance(exc, (ValueError, api.BudgetBlocked)):
+    if isinstance(exc, (ValueError, api.BudgetBlocked, provider_search.DraftGenerationError)):
         return str(exc)[:500]
     return "Provider or storage operation failed. No automatic retry today; inspect provider status and saved results."
 

@@ -236,11 +236,12 @@ function todayRows(id) {
 
 function workerStatus() {
   const w = S.growth.worker || {};
+  if (w.runtime?.running && w.runtime.busy) return `<p class="note">Worker is processing a batch started ${esc(new Date(w.runtime.started_at).toLocaleTimeString())}. Results appear as jobs finish. A long batch may need attention if individual jobs stop progressing.</p>`;
   if (!w.last_tick) return '<p class="blocked">Background worker: no tick recorded yet. Scheduled drafts only run while the server is awake.</p>';
   const minutes = Math.round((Date.now() - new Date(w.last_tick).getTime()) / 60000);
   const when = `${new Date(w.last_tick).toLocaleString(undefined, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} (${minutes < 1 ? "just now" : `${minutes} min ago`})`;
   const failing = w.last_error && (!w.last_ok || w.last_error_at >= w.last_ok);
-  const stale = minutes > 5;
+  const stale = minutes > 5 && !w.runtime?.running;
   return `<p class="${stale || failing ? "blocked" : "note"}">Last worker tick: ${esc(when)}${stale ? ". The worker looks stopped or asleep; scheduled jobs will not run." : ""}${failing ? ` Last tick had errors: ${esc(w.last_error)}` : ""}${w.commit ? ` <span class="muted">Build ${esc(String(w.commit).slice(0, 7))}</span>` : ""}</p>`;
 }
 
@@ -251,6 +252,37 @@ function knowledgeStatus(id) {
   return `<details class="note"><summary>Company knowledge pack ${esc(k.version)}: ${k.usable} facts used in drafts (${k.awaiting_approval} from the website, awaiting owner approval) · ${k.held} held back · ${k.missing.length} missing facts</summary><p class="muted">Source: ${esc(k.source || "")}. Drafts may state only these facts about Voxel1 and remain pending for review. Portfolio projects, testimonials and office cities are held until the owner approves them.</p><ul>${rows}</ul></details>`;
 }
 
+function retryDraftButton(j, r) {
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const supported = /^(?:room:\d+:[a-f0-9]{12}|draft:\d+|message:(?:LinkedIn|WhatsApp):\d+)$/.test(j.job);
+  if (j.state !== "needs_you" || !supported) return "";
+  if (r.retry_safe && r.failure_token && j.day === day && !r.item_id && !r.item_ids?.length) {
+    return `<button class="btn" data-act="retry-draft" data-service="${esc(j.service)}" data-day="${esc(j.day)}" data-job="${esc(j.job)}" data-token="${esc(r.failure_token)}" ${paused(j.service) ? "disabled" : ""}>Retry failed draft</button><span class="sub">One explicit attempt, subject to daily and monthly limits.</span>`;
+  }
+  return '<span class="sub">Retry unavailable: older record, saved output, or unconfirmed failure outcome. Review this job before regenerating.</span>';
+}
+
+function setupChecks(campaign, budget, knowledge, storageAllowed) {
+  if (!campaign) return ["Set a Sales Goal before scheduling this workspace."];
+  const checks = [];
+  if (campaign.full_rhythm && !storageAllowed) checks.push("Research blocked: confirm Brave storage rights before enabling research.");
+  if (budget && budget.searches_used >= budget.limits.searches) checks.push("New discovery blocked: monthly search allowance is used. Existing-lead drafts can still use the remaining Gemini allowance.");
+  if (budget && budget.used.gemini + budget.held.gemini >= budget.limits.gemini) checks.push("New AI drafts blocked: no Gemini allowance remains. Saved drafts can still be reviewed and edited.");
+  if (campaign.full_rhythm) {
+    if (campaign.partner_enabled !== false && !campaign.partner_accounts?.trim()) checks.push("Partner activity needs actual partner names and matching saved leads in Sales Goal.");
+    if (!campaign.existing_clients?.trim()) checks.push("Client activity needs actual client names and matching saved leads, or a recorded Won opportunity.");
+    if (!Object.values(campaign.content_targets || {}).some((v) => v > 0)) checks.push("Social drafts disabled: all daily targets are 0. Set targets in Sales Goal when you want these drafts.");
+    if (!campaign.proof_consent || !campaign.approved_proof?.trim()) checks.push("Public proof unavailable: add approved facts and permission in Sales Goal. Educational drafts do not require a project example.");
+  }
+  if (knowledge?.awaiting_approval) checks.push(`${knowledge.awaiting_approval} website-derived company facts still await owner approval. Review the company knowledge section below.`);
+  return checks;
+}
+
+function workflowSetup(s, campaign) {
+  const checks = setupChecks(campaign, S.budget, S.growth.knowledge?.[s.id], S.growth.research_storage_allowed);
+  return `<div class="panel-b"><h3>Workflow setup</h3><p class="note">Draft preparation and human review are available within the configured limits. These checks do not verify contact identity, business relationships or delivery permission.</p>${checks.length ? `<ul class="note">${checks.map((v) => `<li>${esc(v)}</li>`).join("")}</ul>` : '<p class="note">No missing setup detected by these checks. Review contact details and draft facts before approval.</p>'}<button class="btn" data-act="campaign">Review Sales Goal setup</button></div>`;
+}
+
 function agentPanel(s) {
   const campaign = S.growth.campaigns.find((c) => c.service === s.id);
   const jobs = S.growth.jobs.filter((j) => j.service === s.id);
@@ -259,9 +291,9 @@ function agentPanel(s) {
   return `<section class="panel"><div class="panel-h"><div><h2>Live agent workflow</h2><p class="note">${campaign ? `${esc(campaign.objective)} · Discovery ${esc(campaign.search_time)} / drafts ${esc(campaign.draft_time)} IST, every day. ${paused(s.id) ? "Paused." : "Active during campaign dates."}` : "Set a Sales Goal to start scheduled lead discovery and approval-ready drafts."}</p></div><button class="btn pri" data-act="campaign">${campaign ? "Edit Sales Goal" : "Set Sales Goal"}</button></div>
     <div class="panel-b"><p class="note">${activeLeads(s.id).length} active leads · ${messages.filter((i) => i.state === "pending").length} messages awaiting approval · ${messages.filter((i) => i.state === "done").length} recorded sent · ${meetings} currently at meeting stage · ${wonCount(s.id)} won${campaign?.quarter ? ` in ${esc(campaign.quarter)}` : " (all time)"}. Lead, message and meeting counts are service-wide.</p>${campaign?.content_targets ? `<p class="note">Daily content targets: ${Object.entries(campaign.content_targets).map(([channel, count]) => `${esc(channel)} ${count}`).join(" · ")}. ${campaign.full_rhythm ? "Complete draft rhythm enabled: see per-activity status below. Instagram/Facebook include editable graphic cards." : `${campaign.auto_linkedin ? "AI LinkedIn drafts enabled from 12:00 IST." : "LinkedIn preparation is manual."} ${campaign.auto_rooms ? "AI room drafts enabled from 07:30 IST." : "Room preparation is manual."} Other social content remains manual.`}</p>` : ""}</div>
     <div class="panel-b">${S.growth.automation_missing?.length ? `<p class="blocked">Server setup needed: ${S.growth.automation_missing.map(esc).join(", ")}. Add these server environment settings and restart; never paste API keys into goal fields.</p>` : ""}<p class="note">${campaign?.full_rhythm ? "Runs research, messages, social drafts and reporting within your provider budgets. Signal research requires a Brave plan with storage rights. Missing data and limits appear per activity." : "Uses Apollo, Brave and Gemini within server budgets. Up to one discovery and five email draft attempts per day."} Draft preparation sends or publishes nothing. The hosting server must stay running. <button class="linkish" data-act="refresh-jobs">Refresh results</button></p>${workerStatus()}${knowledgeStatus(s.id)}</div>
-    <div class="tw"><table><thead><tr><th>Day (IST)</th><th>Job</th><th>Status</th><th>Result</th></tr></thead><tbody>${jobs.length ? jobs.map((j) => {
+    ${workflowSetup(s, campaign)}<div class="tw"><table><thead><tr><th>Day (IST)</th><th>Job</th><th>Status</th><th>Result</th></tr></thead><tbody>${jobs.length ? jobs.map((j) => {
       const r = JSON.parse(j.result || "{}");
-      return `<tr><td>${esc(j.day)}</td><td>${esc(j.job)}</td><td>${esc(j.state.replaceAll("_", " "))}</td><td>${esc(r.message || `${r.found ?? 0} found; ${r.added ?? 0} added`)}${r.warnings?.length ? `<span class="sub">${esc(r.warnings.join(" "))}</span>` : ""}${r.item_id ? '<button class="linkish" data-act="approvals">Review draft in Approvals</button>' : ""}</td></tr>`;
+      return `<tr><td>${esc(j.day)}</td><td>${esc(j.job)}<span class="sub">Updated ${esc(new Date(j.updated_at).toLocaleString())}</span></td><td>${esc(j.state.replaceAll("_", " "))}</td><td>${esc(j.state === "running" ? "Processing this attempt; previous results will be replaced after it finishes." : r.message || (j.job === "discovery" ? `${r.found ?? 0} found; ${r.added ?? 0} added` : "No detailed result recorded."))}${r.warnings?.length ? `<span class="sub">${esc(r.warnings.join(" "))}</span>` : ""}${r.item_id ? `<button class="linkish" data-act="review-output" data-output="${r.item_id}">Review saved output</button>` : ""}${retryDraftButton(j, r)}</td></tr>`;
     }).join("") : '<tr><td colspan="4" class="empty-cell">No jobs have run yet.</td></tr>'}</tbody></table></div></section>`;
 }
 
@@ -270,7 +302,14 @@ function rhythmResult(s, index, scheduled) {
   const campaign = S.growth.campaigns.find((c) => c.service === s.id);
   const job = S.growth.jobs.find((j) => j.service === s.id && j.day === day && j.job === `rhythm:${index}`);
   if (!campaign?.full_rhythm) return '<td><span class="note">Draft rhythm disabled</span></td><td class="note">Enable Complete draft rhythm in Sales Goal.</td>';
-  if (!job) return `<td>${paused(s.id) ? "Paused" : "Scheduled / waiting"}</td><td class="note">${esc(scheduled)} IST during campaign dates.</td>`;
+  if (!job) {
+    if (paused(s.id)) return '<td>Paused</td><td class="note">Resume the workspace to run scheduled activities.</td>';
+    if (day < campaign.start || (campaign.end && day > campaign.end)) return '<td>Outside campaign dates</td><td class="note">Review the campaign start and end dates in Sales Goal.</td>';
+    if (index === (s.id === "bim" ? 5 : 1) && campaign.partner_enabled === false) return '<td>Disabled</td><td class="note">Partner activity is optional and disabled in Sales Goal.</td>';
+    const socialSlot = s.id === "bim" ? 8 : 5;
+    if (index === socialSlot && !Object.values(campaign.content_targets || {}).some((v) => v > 0)) return '<td>Disabled (0 targets)</td><td class="note">No social drafts requested. Set daily targets in Sales Goal to enable them.</td>';
+    return `<td>Scheduled / waiting</td><td class="note">${esc(scheduled)} IST during campaign dates.</td>`;
+  }
   const result = JSON.parse(job.result || "{}");
   const outputs = (result.item_ids || []).map(item).filter(Boolean);
   const reviewed = outputs.length && outputs.every((i) => ["approved", "done"].includes(i.state));
@@ -848,6 +887,10 @@ async function act(el) {
     }
     case "approvals": S.page = "approvals"; S.lead = null; render(); return;
     case "refresh-jobs": await run(async () => {}, "Results refreshed.").catch(() => {}); return;
+    case "retry-draft":
+      if (!confirm("Retry this failed draft once? It may use one additional Gemini request. Existing outputs are checked first, daily/monthly caps still apply, and nothing will be sent.")) return;
+      await run(() => api("/api/growth/retry-draft", { method: "POST", body: JSON.stringify({ service: d.service, day: d.day, job: d.job, failure_token: d.token, confirmed: true }) }), (r) => r.message).catch(() => {});
+      return;
     case "edit-goal":
     case "campaign": {
       const c = S.growth.campaigns.find((c) => c.service === s.id);
@@ -870,7 +913,8 @@ async function act(el) {
           { name: "employee_max", label: "Maximum company size", type: "number", value: t.employee_max, optional: true },
           { name: "exclusions", label: "Exclude keywords", value: t.exclusions || "", max: 500, optional: true },
           { name: "target_accounts", label: "Named target accounts (one company per line)", type: "textarea", rows: 3, max: 3000, value: c?.target_accounts || "", optional: true, full: true },
-          { name: "partner_accounts", label: "PMC / consultant / academic partners (names must match saved leads)", type: "textarea", rows: 2, max: 3000, value: c?.partner_accounts || "", optional: true, full: true },
+          { name: "partner_enabled", label: "Partner activity (optional)", type: "select", options: [["no", "Disabled — partners not required"], ["yes", "Enable partner drafting"]], value: c?.partner_enabled === false ? "no" : "yes" },
+          { name: "partner_accounts", label: "PMC / consultant / academic partners (only if partner activity is enabled)", type: "textarea", rows: 2, max: 3000, value: c?.partner_accounts || "", optional: true, full: true },
           { name: "existing_clients", label: "Actual existing clients (names matching saved leads; Training: VITALS/XIM clients)", type: "textarea", rows: 2, max: 3000, value: c?.existing_clients || "", optional: true, full: true },
           { name: "warm_paths", label: "Known introduction paths supplied by your team", type: "textarea", rows: 2, max: 3000, value: c?.warm_paths || "", optional: true, full: true },
           { name: "approved_proof", label: "Approved project proof / trainee story facts for social content", type: "textarea", rows: 3, max: 3000, value: c?.approved_proof || "", optional: true, full: true },
@@ -883,7 +927,7 @@ async function act(el) {
           { name: "auto_linkedin", label: "AI LinkedIn text drafts", type: "select", options: [["no", "Manual only"], ["yes", "Prepare daily target automatically"]], value: c?.auto_linkedin ? "yes" : "no" },
           ...["LinkedIn", "Instagram", "Facebook"].map((channel) => ({ name: `posts_${channel}`, label: `${channel} posts per day (0–10)`, type: "number", min: 0, value: c?.content_targets?.[channel] || 0, required: true })),
         ], submitLabel: "Save Sales Goal and activate",
-        submit: (v) => api(`/api/growth/campaign/${s.id}`, { method: "PUT", body: JSON.stringify({ ...v, goal: Number(v.goal), accept_budget: true, auto_rooms: v.auto_rooms === "yes", auto_linkedin: v.auto_linkedin === "yes", full_rhythm: v.full_rhythm === "yes", proof_consent: v.proof_consent === "yes",
+        submit: (v) => api(`/api/growth/campaign/${s.id}`, { method: "PUT", body: JSON.stringify({ ...v, goal: Number(v.goal), accept_budget: true, auto_rooms: v.auto_rooms === "yes", auto_linkedin: v.auto_linkedin === "yes", full_rhythm: v.full_rhythm === "yes", proof_consent: v.proof_consent === "yes", partner_enabled: v.partner_enabled === "yes",
           content_targets: Object.fromEntries(["LinkedIn", "Instagram", "Facebook"].map((channel) => [channel, Number(v[`posts_${channel}`])])),
           targeting: { ...t, categories: v.industries.split(",").map((x) => x.trim()).filter(Boolean), countries: v.countries.split(",").map((x) => x.trim()).filter(Boolean), keywords: v.keywords, titles: v.titles, exclusions: v.exclusions, employee_min: v.employee_min, employee_max: v.employee_max, goal: v.objective } }) }),
       }); return;
@@ -915,7 +959,7 @@ async function act(el) {
       const leadId = S.lead, sent = S.growth.items.some((i) => i.lead_id === leadId && i.kind === "outreach" && ["approved", "done"].includes(i.state));
       openEditor({
         title: "Write draft with AI",
-        help: "Gemini writes a first email using only what this app knows about the lead. It counts as one Gemini request against the monthly limit. The draft waits for your edits and approval; nothing is sent.",
+        help: "If a pending or approved first-contact email already exists, it opens for review without another request. Otherwise Gemini writes one email using the stored facts and one request from the monthly allowance. Edit the existing draft to change it. Nothing is sent.",
         fields: [{ name: "purpose", label: "Purpose", type: "select", options: [["First contact", "First contact"], ...(sent ? [["Follow-up", "Follow-up"]] : [])], value: sent ? "Follow-up" : "First contact", full: true },
           { name: "guidance", label: "Guidance for the AI", type: "textarea", rows: 3, max: 500, optional: true, value: "" }],
         submitLabel: "Write draft",
@@ -995,6 +1039,24 @@ $("icp-form").addEventListener("submit", async (e) => {
 });
 
 matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => render());
+
+// Refresh read-only dashboard data without replacing an open form or lead edits.
+let refreshingDashboard = false;
+function canRefreshDashboard() {
+  return Boolean(S.growth && !S.busy && !document.hidden && S.page === "service" && !S.lead
+    && !document.querySelector("dialog[open]")
+    && !document.activeElement?.matches("input, textarea, select, [contenteditable=true]"));
+}
+async function refreshDashboard() {
+  if (refreshingDashboard || !canRefreshDashboard()) return;
+  refreshingDashboard = true;
+  try {
+    await load();
+    if (canRefreshDashboard()) render();
+  } catch { /* Keep the saved display; manual refresh still reports errors. */ }
+  finally { refreshingDashboard = false; }
+}
+setInterval(refreshDashboard, 60000);
 
 (async () => {
   try { await load(); render(); }

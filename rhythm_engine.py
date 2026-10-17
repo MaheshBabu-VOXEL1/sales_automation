@@ -138,6 +138,11 @@ def mapping(api, service, config, day):
 
 
 def message(api, service, config, day, lead, kind, channel, label):
+    with provider_search.DRAFT_LOCK:
+        return _message(api, service, config, day, lead, kind, channel, label)
+
+
+def _message(api, service, config, day, lead, kind, channel, label):
     with closing(api.connect()) as db:
         existing = api.run(db, "SELECT * FROM growth_items WHERE service=? AND lead_id=? AND kind='outreach' AND channel=? AND label=? AND state IN ('pending','approved') ORDER BY id DESC", (service, lead["id"], channel, label)).fetchone()
         if existing:
@@ -187,6 +192,8 @@ def outreach(api, service, config, day):
 
 
 def partner(api, service, config, day, academic=False):
+    if config.get("partner_enabled", True) is False:
+        return {"no_action": True, "message": "Partner activity disabled in Sales Goal. No partner details or draft are required."}
     names = [v.strip().casefold() for v in config.get("partner_accounts", "").splitlines() if v.strip()]
     matches = [l for l in leads(api, service) if ((l["category"] == "education" or re.search(r"\b(university|college|institute)\b", l["company"], re.I)) if academic else any(n == l["company"].casefold() for n in names))]
     if not matches:
@@ -266,6 +273,8 @@ def summary(api, service, day, research_issue=None):
         counts = [dict(r) for r in api.run(db, "SELECT kind, state, COUNT(*) AS total FROM growth_items WHERE service=? GROUP BY kind, state", (service,))]
     lines = [f"{service.upper()} daily summary — {day} (IST)", "Job outcomes for today:"]
     for job in jobs:
+        if job["job"] == ("rhythm:9" if service == "bim" else "summary"):
+            continue  # This summary is still being written; do not report itself as stuck.
         data = json.loads(job["result"] or "{}")
         lines.append(f"- {job['job']}: {job['state']} — {data.get('message') or ('Found: ' + str(data.get('found', 'not recorded')))}")
     if research_issue:
@@ -278,7 +287,7 @@ def summary(api, service, day, research_issue=None):
 
 
 def error(api, exc):
-    if isinstance(exc, (MissingInput, ValueError, api.BudgetBlocked)):
+    if isinstance(exc, (MissingInput, ValueError, api.BudgetBlocked, provider_search.DraftGenerationError)):
         return str(exc)[:650]
     return "Provider or storage operation failed. No automatic retry today; inspect provider status and saved results."
 

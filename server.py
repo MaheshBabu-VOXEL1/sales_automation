@@ -49,6 +49,8 @@ SESSION_SECONDS = 8 * 60 * 60
 sessions: dict[str, float] = {}
 failed_logins: dict[str, list[float]] = {}
 session_lock = threading.Lock()
+worker_runtime_lock = threading.Lock()
+worker_runtime = {"running": False, "busy": False, "started_at": ""}
 USER_AGENT = "Voxel1ProspectingPrototype/0.1 (local internal research)"
 OVERPASS = "https://overpass-api.de/api/interpreter"
 OVERPASS_BACKUP = "https://overpass.private.coffee/api/interpreter"
@@ -372,6 +374,11 @@ def reserve_ai_draft(operation="outreach_draft") -> None:
 
 
 def ai_draft_lead(service: str, lead_id: int, payload: dict) -> dict:
+    with provider_search.DRAFT_LOCK:
+        return _ai_draft_lead(service, lead_id, payload)
+
+
+def _ai_draft_lead(service: str, lead_id: int, payload: dict) -> dict:
     purpose = payload.get("purpose")
     if purpose not in ai_draft.PURPOSES:
         raise ValueError("Choose First contact or Follow-up.")
@@ -388,6 +395,10 @@ def ai_draft_lead(service: str, lead_id: int, payload: dict) -> dict:
             raise ValueError("Restore this company before drafting a message to it.")
         if growth.is_paused(db, run, service):
             raise ValueError("This workspace is paused. Resume it before drafting.")
+        if purpose == "First contact":
+            saved = run(db, "SELECT * FROM growth_items WHERE service=? AND lead_id=? AND kind='outreach' AND channel='Email' AND label='First contact' AND state IN ('pending','approved') ORDER BY id DESC LIMIT 1", (service, lead_id)).fetchone()
+            if saved:
+                return {**dict(saved), "reused": True}
         room = run(db, "SELECT room_notes FROM growth_leads WHERE lead_id=?", (lead_id,)).fetchone()
         campaign = run(db, "SELECT config FROM agent_campaigns WHERE service=?", (service,)).fetchone()
         focus = ai_draft.campaign_focus(json.loads(campaign["config"]) if campaign else {})
@@ -721,8 +732,11 @@ class Handler(BaseHTTPRequestHandler):
                 snapshot = growth.snapshot(db, run)
                 snapshot["outlook"] = outlook.status(db, run)
                 beat = run(db, "SELECT last_tick, last_ok, last_error, last_error_at FROM worker_heartbeat WHERE name='rhythm'").fetchone()
-                snapshot["worker"] = {**(dict(beat) if beat else {}), "commit": git_commit()}
+                with worker_runtime_lock:
+                    runtime = dict(worker_runtime)
+                snapshot["worker"] = {**(dict(beat) if beat else {}), "commit": git_commit(), "runtime": runtime}
                 snapshot["knowledge"] = {service: knowledge.summary(service) for service in SERVICES}
+                snapshot["research_storage_allowed"] = os.environ.get("BRAVE_SEARCH_STORAGE_ALLOWED", "") == "1"
                 required = ("APOLLO_API_KEY", "BRAVE_SEARCH_API_KEY", "GEMINI_API_KEY",
                             "VOXEL1_MONTHLY_SEARCH_LIMIT", "VOXEL1_MONTHLY_APOLLO_REQUESTS",
                             "VOXEL1_MONTHLY_BRAVE_REQUESTS", "VOXEL1_MONTHLY_GEMINI_REQUESTS")
@@ -973,6 +987,10 @@ class Handler(BaseHTTPRequestHandler):
             return False
         try:
             payload = self.read_json()
+            if parts[2:] == ["retry-draft"] and method == "POST":
+                import job_recovery
+                self.respond(200, job_recovery.retry(sys.modules[__name__], payload))
+                return True
             with connect() as db:
                 if len(parts) == 4 and parts[2] == "campaign" and method == "PUT":
                     result = automation.save(sys.modules[__name__], db, parts[3], payload)
@@ -1051,12 +1069,23 @@ def _tick_rhythms() -> None:
 
 def rhythm_worker(stop):
     """Plan enabled workspaces even when no browser is open."""
-    while not stop.is_set():
-        try:
-            worker_tick()
-        except Exception:
-            logging.exception("Worker tick failed; will retry in 30 seconds.")
-        stop.wait(30)
+    with worker_runtime_lock:
+        worker_runtime.update(running=True)
+    try:
+        while not stop.is_set():
+            with worker_runtime_lock:
+                worker_runtime.update(busy=True, started_at=now())
+            try:
+                worker_tick()
+            except Exception:
+                logging.exception("Worker tick failed; will retry in 30 seconds.")
+            finally:
+                with worker_runtime_lock:
+                    worker_runtime.update(busy=False)
+            stop.wait(30)
+    finally:
+        with worker_runtime_lock:
+            worker_runtime.update(running=False, busy=False)
 
 
 if __name__ == "__main__":
