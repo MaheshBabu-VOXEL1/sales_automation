@@ -115,12 +115,8 @@ button.dl-m { cursor: pointer; }
 button.dl-m:hover { border-color: var(--ok); }
 .dl-m.on { background: var(--ok); border-color: var(--ok); }
 .dl-m.on::after { content: ""; position: absolute; left: 5px; top: 2px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
-.dl-m.auto { border: 0; background: radial-gradient(circle, var(--link) 3px, var(--info-bg) 3.5px); }
 .dl-m.draft { border: 0; background: radial-gradient(circle, var(--warn) 3px, var(--warn-bg) 3.5px); }
-.dl-m.ring { border-style: dashed; }
-.dl.planned .dl-a, .dl.planned .dl-ty { opacity: .55; }
 .dl.done .dl-a b, .dl.skipped .dl-a b { color: var(--muted); text-decoration: line-through; }
-.dl-na { font-size: 12px; color: var(--faint); }
 .dl-x { font-size: 12px; color: var(--muted); opacity: 0; transition: opacity .1s; }
 .dl:hover .dl-x, .dl:focus-within .dl-x { opacity: 1; }
 @media (hover: none) { .dl-x { opacity: 1; } }
@@ -132,3 +128,25 @@ button.dl-m:hover { border-color: var(--ok); }
   .dl-r { grid-column: 3; justify-content: flex-start; }
   .dl-open { grid-column: 1 / -1; }
 }
+/* Rhythm activity markers: grey = waiting/off, blue = running, green = done, amber = needs approval, red = blocked */
+:root { --stop: #B42318; --stop-bg: #FEF3F2; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --stop: #F97066; --stop-bg: #3A1512; } }
+:root[data-theme="dark"] { --stop: #F97066; --stop-bg: #3A1512; }
+.st.stop { color: var(--stop); background: var(--stop-bg); } .st.stop i { background: var(--stop); }
+.dl-m.off, .dl-m.scheduled { border-style: dashed; }
+.dl-m.running { border: 0; background: radial-gradient(circle, var(--link) 3px, var(--info-bg) 3.5px); }
+.dl-m.done { border: 0; background: var(--ok); }
+.dl-m.done::after { content: ""; position: absolute; left: 6px; top: 3px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.dl-m.approval { border: 0; background: radial-gradient(circle, var(--warn) 3px, var(--warn-bg) 3.5px); }
+.dl-m.blocked { border: 0; background: radial-gradient(circle, var(--stop) 3px, var(--stop-bg) 3.5px); }
+.dl.slot.off .dl-a, .dl.slot.off .dl-ty { opacity: .55; }
+.dl.slot.done .dl-a b { color: var(--muted); }
+.dl.slot.blocked { background: var(--stop-bg); }
+.dl.slot.blocked .dl-s { color: var(--stop); }
+.dl.slot.approval .dl-s { color: var(--warn); }
+.stopped { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--stop-bg); color: var(--stop); font-size: 13px; line-height: 1.5; }
+.dl-alert { margin: 0 22px 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+@media (max-width: 640px) { .dl-alert { margin: 0 16px 12px; } }
+.dl.slot.done .dl-a b { text-decoration: none; }
+/* Tasks people tick off themselves use a square box, distinct from the round automation markers */
+.dl-m.chk { border-radius: 5px; }
