@@ -200,15 +200,14 @@ function header(s) {
   const badge = paused(s.id) ? '<span class="badge cold">Paused</span>' : n ? `<span class="badge warn">${n} need${n === 1 ? "s" : ""} you</span>` : '<span class="badge ok">Active</span>';
   const leads = activeLeads(s.id);
   const pipeline = leads.filter((l) => ["engaged", "meeting", "proposal", "negotiation"].includes(detail(l.id).stage)).length;
-  const plan = todayRows(s.id).filter((r) => r.kind === "task");
-  const done = plan.filter((r) => r.state === "done").length;
+  const plan = rhythmPlan(s.id);
   const goal = st.goal, won = wonCount(s.id);
   const seg = goal ? `<span class="seg">${Array.from({ length: Math.min(goal, 20) }, (_, i) => `<i class="${i < won ? "won" : ""}"></i>`).join("")}</span>` : '<span>Set a goal to track progress</span>';
-  const next = items(s.id, "task").filter((i) => i.state === "pending").sort(byDue)[0];
+  const next = n;
   const now = paused(s.id)
-    ? `<b>Paused.</b> New searches, approvals and task completion are blocked until you resume. A search already running is not cancelled.`
-    : next ? `<b>Next:</b> ${esc(next.title)} <span class="muted">· ${esc(fmtWhen(next))}${next.owner ? " · " + esc(next.owner) : ""}</span>`
-      : `<b>No open tasks.</b> View live agent jobs, or set the rhythm with Edit rhythm.`;
+    ? `<b>Paused.</b> New searches and approvals are blocked until you resume. A search already running is not cancelled.`
+    : n ? `<b>${n} draft${n === 1 ? "" : "s"} waiting for your approval.</b>`
+      : `<b>Nothing waiting for you.</b> The rhythm prepares drafts for approval; set it with Edit rhythm.`;
   return `<div class="crumb">Growth Engine <span>/</span> ${S.lead ? `<button type="button" data-act="back">${esc(s.name)}</button> <span>/</span> Lead room` : esc(s.name)}</div>
   <div class="ph">
     <div class="ph-l"><span class="av lg av-${s.id === "training" ? "train" : s.id}">${s.code}</span><div style="min-width:0"><div class="title-row"><h1>${esc(s.name)}</h1>${badge}</div><p>${esc(st.strategy || "No strategy written yet.")}</p></div></div>
@@ -218,7 +217,7 @@ function header(s) {
     <div class="kpi"><span>Sales goal ${esc(S.growth.sales_progress?.[s.id]?.quarter || "(all time)")}</span><b>${won}<small> / ${goal}</small></b>${seg}</div>
     <div class="kpi"><span>Active leads</span><b>${leads.length}</b><span>${leads.filter((l) => l.email || l.phone).length} with email or phone</span></div>
     <div class="kpi"><span>In pipeline</span><b>${pipeline}</b><span>engaged to negotiation</span></div>
-    <div class="kpi"><span>Today’s plan</span><b>${done}<small> / ${plan.length}</small></b><span>tasks done</span></div>
+    <div class="kpi"><span>Daily rhythm</span><b>${plan.filter((a) => a.on).length}<small> / ${plan.length}</small></b><span>activities on</span></div>
     <div class="kpi ${n ? "warn" : ""}"><span>Needs you</span><b>${n}</b><span>drafts to approve</span></div>
   </section>
   <div class="now"><span class="pulse${paused(s.id) || !next ? " off" : ""}"></span><span>${now}</span></div>`;
@@ -327,21 +326,13 @@ function rhythmResult(s, index, scheduled) {
 function rhythm(s) {
   const schedule = S.growth.rhythm_settings.find((r) => r.service === s.id);
   const full = S.growth.campaigns.find((c) => c.service === s.id)?.full_rhythm;
-  const rows = todayRows(s.id);
-  const later = items(s.id, "task").filter((i) => i.state === "pending" && i.due && i.due > today()).sort(byDue);
-  const groups = [["Marketing", ["Marketing"]], ["Content", ["Content"]], ["BD", ["BD"]], ["Outreach", ["Outreach"]], ["Sales", ["Sales", "Account"]]];
-  const tasks = rows.filter((r) => r.kind === "task");
-  const phases = groups.map(([name, labels]) => {
-    const it = tasks.filter((r) => labels.includes(r.label));
-    const d = it.filter((r) => r.state === "done").length;
-    return `<div class="phs"><div class="h"><span class="ty ${name}">${name === "Sales" ? "Sales &amp; account" : name}</span><span class="num">${d}/${it.length}</span></div><div class="mbar"><i style="width:${it.length ? (d / it.length) * 100 : 0}%"></i></div></div>`;
-  }).join("");
+  const drafts = pendingDrafts(s.id).sort(byDue);
   const row = (i) => {
     const l = i.lead_id ? lead(i.lead_id) : null;
-    const typeCell = i.kind === "task" ? (i.label ? `<span class="ty ${esc(i.label)}">${esc(i.label)}</span>` : '<span class="ty plain">Task</span>') : `<span class="ty Content">${i.kind === "brief" ? "Review brief" : i.kind === "room" ? "Lead room" : i.kind === "content" ? "Content" : "Outreach"}</span>`;
-    return `<tr><td class="t">${esc(fmtWhen(i))}</td><td>${typeCell}</td>
-      <td><b class="strong">${esc(i.title)}</b>${l ? `<span class="sub">Lead: <button class="linkish" type="button" data-lead="${l.id}">${esc(l.company)}</button></span>` : ""}${i.kind !== "task" ? `<span class="sub">${esc(i.channel)} draft${i.label ? " · " + esc(i.label) : ""}</span>` : ""}${draftText(i)}${itemButtons(i)}</td>
-      <td>${who(i.owner)}</td><td>${itemStatus(i)}</td></tr>`;
+    const kind = i.kind === "brief" ? "Review brief" : i.kind === "room" ? "Lead room" : i.kind === "content" ? "Content" : "Outreach";
+    return `<tr><td><span class="ty Content">${kind}</span></td>
+      <td><b class="strong">${esc(i.title)}</b>${l ? `<span class="sub">Lead: <button class="linkish" type="button" data-lead="${l.id}">${esc(l.company)}</button></span>` : ""}<span class="sub">${esc(i.channel)} draft${i.label ? " · " + esc(i.label) : ""}</span>${draftText(i)}
+      <div class="actions">${i.body ? `<button class="btn" data-item="toggle" data-id="${i.id}">${S.open[i.id] ? "Hide text" : "View text"}</button>` : ""}<button class="btn pri" data-item="approve" data-id="${i.id}">Approve</button><button class="btn" data-item="reject" data-id="${i.id}">Reject</button></div></td></tr>`;
   };
   return `${agentPanel(s)}<section class="panel">
     <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">${full ? "Runs daily during campaign dates, through review drafts. Sending and publishing are separate." : "Reference schedule; enable Complete draft rhythm in Sales Goal for execution."} All times IST (Asia/Kolkata).</span></div>
@@ -351,20 +342,10 @@ function rhythm(s) {
     </table></div><div class="panel-f"><span class="note">${full ? "Each activity shows saved drafts, research coverage, or missing input/budget. Review outputs before use. The worker stays available while the server runs and respects pause." : "Set times and turn activities on or off with Edit rhythm."} Missed days are not backfilled. <a href="/draft-rhythm-guide" target="_blank" rel="noopener">Workflow setup and limits</a></span></div>
   </section>
   <section class="panel">
-    <div class="panel-h"><div><h2>Today’s plan</h2><span class="note">Saved tasks and generated drafts awaiting your review.</span></div>
-      <div class="actions"><button class="btn pri" type="button" data-act="new-task">New task</button></div></div>
-    <div class="phases">${phases}</div>
+    <div class="panel-h"><div><h2>Waiting for your approval</h2><span class="note">Drafts the rhythm prepared. Approve or reject each one; nothing is sent or posted without approval.</span></div></div>
     <div class="tw"><table>
-      <thead><tr><th>When</th><th>Type</th><th>Activity</th><th>Owner</th><th>Status</th></tr></thead>
-      <tbody>${rows.length ? rows.map(row).join("") : `<tr><td colspan="5" class="empty-cell">Nothing planned for today. Use <b>New task</b> for anything the rhythm does not cover.</td></tr>`}</tbody>
-    </table></div>
-    <div class="panel-f"><label class="fshow"><input type="checkbox" id="show-done-tasks" ${S.showDoneTasks ? "checked" : ""}> Show all completed and skipped tasks</label></div>
-  </section>
-  <section class="panel">
-    <div class="panel-h"><h2>Coming up</h2><span class="note">${later.length} scheduled task${later.length === 1 ? "" : "s"}</span></div>
-    <div class="tw"><table>
-      <thead><tr><th>When</th><th>Type</th><th>Activity</th><th>Owner</th><th>Status</th></tr></thead>
-      <tbody>${later.length ? later.map(row).join("") : '<tr><td colspan="5" class="empty-cell">No future tasks.</td></tr>'}</tbody>
+      <thead><tr><th>Type</th><th>Draft</th></tr></thead>
+      <tbody>${drafts.length ? drafts.map(row).join("") : '<tr><td colspan="2" class="empty-cell">Nothing waiting for approval.</td></tr>'}</tbody>
     </table></div>
   </section>`;
 }
