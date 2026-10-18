@@ -100,3 +100,7 @@ dialog.sheet form { padding: 20px 22px; display: flex; flex-direction: column; g
 /* Keep the approvals count readable when the button is selected, in both themes. */
 .apbtn.on b { background: var(--navy-fg); color: var(--navy); }
 .apbtn.on.warn b { background: #CC0000; color: #fff; }
+/* Rhythm activities not yet on today's list */
+tr.planned td { opacity: .55; }
+tr.planned:hover td { opacity: .8; }
+.panel-f .fshow + .note { display: block; margin-top: 8px; }

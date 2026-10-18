@@ -208,7 +208,7 @@ function header(s) {
   const now = paused(s.id)
     ? `<b>Paused.</b> New searches, approvals and task completion are blocked until you resume. A search already running is not cancelled.`
     : next ? `<b>Next:</b> ${esc(next.title)} <span class="muted">· ${esc(fmtWhen(next))}${next.owner ? " · " + esc(next.owner) : ""}</span>`
-      : `<b>No open tasks.</b> View live agent jobs or add today’s task plan from Daily rhythm.`;
+      : `<b>No open tasks.</b> View live agent jobs or add the rhythm to today from Daily rhythm.`;
   return `<div class="crumb">Growth Engine <span>/</span> ${S.lead ? `<button type="button" data-act="back">${esc(s.name)}</button> <span>/</span> Lead room` : esc(s.name)}</div>
   <div class="ph">
     <div class="ph-l"><span class="av lg av-${s.id === "training" ? "train" : s.id}">${s.code}</span><div style="min-width:0"><div class="title-row"><h1>${esc(s.name)}</h1>${badge}</div><p>${esc(st.strategy || "No strategy written yet.")}</p></div></div>
@@ -297,24 +297,25 @@ function agentPanel(s) {
     }).join("") : '<tr><td colspan="4" class="empty-cell">No jobs have run yet.</td></tr>'}</tbody></table></div></section>`;
 }
 
+// Draft-workflow status of one rhythm slot: null when the draft rhythm is off, else [state, notes, outputs].
 function rhythmResult(s, index, scheduled) {
   const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const campaign = S.growth.campaigns.find((c) => c.service === s.id);
   const job = S.growth.jobs.find((j) => j.service === s.id && j.day === day && j.job === `rhythm:${index}`);
-  if (!campaign?.full_rhythm) return '<td><span class="note">Draft rhythm disabled</span></td><td class="note">Enable Complete draft rhythm in Sales Goal.</td>';
+  if (!campaign?.full_rhythm) return null;
   if (!job) {
-    if (paused(s.id)) return '<td>Paused</td><td class="note">Resume the workspace to run scheduled activities.</td>';
-    if (day < campaign.start || (campaign.end && day > campaign.end)) return '<td>Outside campaign dates</td><td class="note">Review the campaign start and end dates in Sales Goal.</td>';
-    if (index === (s.id === "bim" ? 5 : 1) && campaign.partner_enabled === false) return '<td>Disabled</td><td class="note">Partner activity is optional and disabled in Sales Goal.</td>';
+    if (paused(s.id)) return ["Paused", "Resume the workspace to run scheduled activities."];
+    if (day < campaign.start || (campaign.end && day > campaign.end)) return ["Outside campaign dates", "Review the campaign start and end dates in Sales Goal."];
+    if (index === (s.id === "bim" ? 5 : 1) && campaign.partner_enabled === false) return ["Disabled", "Partner activity is optional and disabled in Sales Goal."];
     const socialSlot = s.id === "bim" ? 8 : 5;
-    if (index === socialSlot && !Object.values(campaign.content_targets || {}).some((v) => v > 0)) return '<td>Disabled (0 targets)</td><td class="note">No social drafts requested. Set daily targets in Sales Goal to enable them.</td>';
-    return `<td>Scheduled / waiting</td><td class="note">${esc(scheduled)} IST during campaign dates.</td>`;
+    if (index === socialSlot && !Object.values(campaign.content_targets || {}).some((v) => v > 0)) return ["Disabled (0 targets)", "No social drafts requested. Set daily targets in Sales Goal to enable them."];
+    return ["Scheduled / waiting", `${scheduled} IST during campaign dates.`];
   }
   const result = JSON.parse(job.result || "{}");
   const outputs = (result.item_ids || []).map(item).filter(Boolean);
   const reviewed = outputs.length && outputs.every((i) => ["approved", "done"].includes(i.state));
   const state = ["needs_you", "needs_input", "needs_budget"].includes(job.state) ? job.state.replaceAll("_", " ") : reviewed ? "Reviewed" : job.state.replaceAll("_", " ");
-  return `<td><b>${esc(state)}</b></td><td><span class="sub">${esc(result.message || "Job is running.")}</span>${(result.issues || []).map((v) => `<span class="sub">${esc(v)}</span>`).join("")}${outputs.map((i) => `<button class="linkish" data-act="review-output" data-output="${i.id}">${esc(i.title)}</button>`).join("<br>")}</td>`;
+  return [state, [result.message || "Job is running.", ...(result.issues || [])], outputs];
 }
 
 function rhythm(s) {
@@ -329,29 +330,42 @@ function rhythm(s) {
     const d = it.filter((r) => r.state === "done").length;
     return `<div class="phs"><div class="h"><span class="ty ${name}">${name === "Sales" ? "Sales &amp; account" : name}</span><span class="num">${d}/${it.length}</span></div><div class="mbar"><i style="width:${it.length ? (d / it.length) * 100 : 0}%"></i></div></div>`;
   }).join("");
-  const row = (i) => {
+  const flow = (status) => {
+    if (!status) return "";
+    const [state, notes, outputs = []] = status;
+    return `<span class="sub">Draft workflow: <b>${esc(state)}</b></span>${[].concat(notes).map((v) => `<span class="sub">${esc(v)}</span>`).join("")}${outputs.map((i) => `<button class="linkish" data-act="review-output" data-output="${i.id}">${esc(i.title)}</button>`).join("<br>")}`;
+  };
+  const row = (i, extra = "") => {
     const l = i.lead_id ? lead(i.lead_id) : null;
     const typeCell = i.kind === "task" ? (i.label ? `<span class="ty ${esc(i.label)}">${esc(i.label)}</span>` : '<span class="ty plain">Task</span>') : `<span class="ty Content">${i.kind === "brief" ? "Review brief" : i.kind === "room" ? "Lead room" : i.kind === "content" ? "Content" : "Outreach"}</span>`;
     return `<tr><td class="t">${esc(fmtWhen(i))}</td><td>${typeCell}</td>
-      <td><b class="strong">${esc(i.title)}</b>${l ? `<span class="sub">Lead: <button class="linkish" type="button" data-lead="${l.id}">${esc(l.company)}</button></span>` : ""}${i.kind !== "task" ? `<span class="sub">${esc(i.channel)} draft${i.label ? " · " + esc(i.label) : ""}</span>` : ""}${draftText(i)}${itemButtons(i)}</td>
+      <td><b class="strong">${esc(i.title)}</b>${l ? `<span class="sub">Lead: <button class="linkish" type="button" data-lead="${l.id}">${esc(l.company)}</button></span>` : ""}${i.kind !== "task" ? `<span class="sub">${esc(i.channel)} draft${i.label ? " · " + esc(i.label) : ""}</span>` : ""}${extra}${draftText(i)}${itemButtons(i)}</td>
       <td>${who(i.owner)}</td><td>${itemStatus(i)}</td></tr>`;
   };
+  // One list for the day: each rhythm activity sits in its time slot, as the saved task once it is on today's
+  // list (matched by title, as the server does) or as a placeholder until then; other tasks and drafts slot in by time.
+  const t = today();
+  const used = new Set();
+  const entries = S.growth.rhythm_templates[s.id].map(([time, label, title, purpose], index) => {
+    const task = rows.find((r) => r.kind === "task" && r.due === t && r.title === title && !used.has(r.id));
+    const status = full ? rhythmResult(s, index, time) : null;
+    if (task) { used.add(task.id); return { key: "1" + (task.due_time || time), html: row(task, flow(status)) }; }
+    return { key: "1" + time, missing: true, html: `<tr class="planned"><td class="t">${esc(time)}</td><td><span class="ty ${esc(label)}">${esc(label)}</span></td>
+      <td><b class="strong">${esc(title)}</b><span class="sub">${esc(purpose)}</span>${flow(status)}</td><td><span class="muted">—</span></td><td><span class="muted">Not on today’s list</span></td></tr>` };
+  });
+  rows.filter((r) => !used.has(r.id)).forEach((r) => entries.push({ key: (r.due && r.due < t ? "0" : "1") + (r.due_time || "99:99"), html: row(r) }));
+  entries.sort((x, y) => x.key.localeCompare(y.key));
+  const missing = entries.filter((e) => e.missing).length;
+  const total = S.growth.rhythm_templates[s.id].length;
   return `${agentPanel(s)}<section class="panel">
-    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">${full ? "Runs daily during campaign dates, through review drafts. Sending and publishing are separate." : "Reference schedule; enable Complete draft rhythm in Sales Goal for execution."} All times IST (Asia/Kolkata).</span></div>
-      <div class="actions">${full ? '<button class="btn" type="button" data-act="edit-goal">Edit Sales Goal</button>' : `<button class="btn" type="button" data-act="auto-rhythm">${schedule.enabled ? "Disable daily planning" : "Enable daily planning"}</button><button class="btn pri" type="button" data-act="routine">Add rhythm to today’s plan</button>`}</div></div>
-    <div class="tw"><table><thead><tr><th>Time (IST)</th><th>Type</th><th>Activity and purpose</th><th>Draft workflow status</th><th>Outputs / next action</th></tr></thead>
-      <tbody>${S.growth.rhythm_templates[s.id].map(([time, label, title, purpose], index) => `<tr><td class="t">${esc(time)}</td><td><span class="ty ${esc(label)}">${esc(label)}</span></td><td><b class="strong">${esc(title)}</b><span class="sub">${esc(purpose)}</span></td>${rhythmResult(s, index, time)}</tr>`).join("")}</tbody>
-    </table></div><div class="panel-f"><span class="note">${full ? "Each activity shows saved drafts, research coverage, or missing input/budget. Review outputs before use. The worker stays available while the server runs and respects pause." : (schedule.enabled ? "Manual task planning enabled for weekdays." : "Manual task planning is disabled.")} Missed days are not backfilled. <a href="/draft-rhythm-guide" target="_blank" rel="noopener">Workflow setup and limits</a></span></div>
-  </section>
-  <section class="panel">
-    <div class="panel-h"><div><h2>Today’s plan</h2><span class="note">Saved tasks and generated drafts awaiting your review.</span></div>
-      <div class="actions"><button class="btn" type="button" data-act="routine">Add rhythm to today’s plan</button><button class="btn pri" type="button" data-act="new-task">New task</button></div></div>
+    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">Today’s tasks and drafts awaiting your review, around the ${total}-activity rhythm. ${total - missing} of ${total} rhythm activities are on today’s list. ${full ? "Runs daily during campaign dates, through review drafts. Sending and publishing are separate." : ""} All times IST (Asia/Kolkata).</span></div>
+      <div class="actions">${full ? '<button class="btn" type="button" data-act="edit-goal">Edit Sales Goal</button>' : `<button class="btn" type="button" data-act="auto-rhythm">${schedule.enabled ? "Disable daily planning" : "Enable daily planning"}</button>`}${missing ? `<button class="btn" type="button" data-act="routine">Add ${missing === total ? "rhythm" : `remaining ${missing}`} to today</button>` : ""}<button class="btn pri" type="button" data-act="new-task">New task</button></div></div>
     <div class="phases">${phases}</div>
     <div class="tw"><table>
-      <thead><tr><th>When</th><th>Type</th><th>Activity</th><th>Owner</th><th>Status</th></tr></thead>
-      <tbody>${rows.length ? rows.map(row).join("") : `<tr><td colspan="5" class="empty-cell">Nothing planned for today. Use <b>New task</b>, or <b>Add rhythm to today’s plan</b> to create the reference rhythm tasks for ${esc(s.name)}.</td></tr>`}</tbody>
+      <thead><tr><th>When (IST)</th><th>Type</th><th>Activity</th><th>Owner</th><th>Status</th></tr></thead>
+      <tbody>${entries.map((e) => e.html).join("")}</tbody>
     </table></div>
-    <div class="panel-f"><label class="fshow"><input type="checkbox" id="show-done-tasks" ${S.showDoneTasks ? "checked" : ""}> Show all completed and skipped tasks</label></div>
+    <div class="panel-f"><label class="fshow"><input type="checkbox" id="show-done-tasks" ${S.showDoneTasks ? "checked" : ""}> Show all completed and skipped tasks</label><span class="note">${full ? "Each activity shows saved drafts, research coverage, or missing input/budget. Review outputs before use. The worker stays available while the server runs and respects pause." : (schedule.enabled ? "Daily planning adds the rhythm to today’s list every weekday from 06:00 IST." : "Daily planning is off; add the rhythm to today manually.")} Missed days are not backfilled. <a href="/draft-rhythm-guide" target="_blank" rel="noopener">Workflow setup and limits</a></span></div>
   </section>
   <section class="panel">
     <div class="panel-h"><h2>Coming up</h2><span class="note">${later.length} scheduled task${later.length === 1 ? "" : "s"}</span></div>
@@ -973,7 +987,7 @@ async function act(el) {
       return;
     }
     case "routine": {
-      await run(() => api(`/api/growth/rhythm/${s.id}`, { method: "POST", body: "{}" }), (result) => `${result.created} tasks added to today’s plan (IST).`).catch(() => {});
+      await run(() => api(`/api/growth/rhythm/${s.id}`, { method: "POST", body: "{}" }), (result) => `${result.created} tasks added to today’s rhythm list (IST).`).catch(() => {});
       return;
     }
     case "icp": openIcp(); return;
