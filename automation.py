@@ -48,9 +48,19 @@ def save(api, db, service, payload):
     # Legacy campaign requests remain valid and preserve unified settings.
     current = api.run(db, "SELECT config FROM agent_campaigns WHERE service=?", (service,)).fetchone()
     previous = json.loads(current["config"]) if current else {}
-    for key in ("quarter", "content_targets", "strategy", "auto_rooms", "auto_linkedin", "full_rhythm", "target_accounts", "partner_accounts", "partner_enabled", "existing_clients", "warm_paths", "approved_proof", "proof_consent", "service_focus"):
+    for key in ("quarter", "content_targets", "strategy", "auto_rooms", "auto_linkedin", "full_rhythm", "target_accounts", "partner_accounts", "partner_enabled", "existing_clients", "warm_paths", "approved_proof", "proof_consent", "service_focus", "rhythm"):
         if key in previous:
             config[key] = previous[key]
+    if "rhythm" in payload:
+        # One {time, on} per activity in rhythms.json, in the same order.
+        plan = payload["rhythm"]
+        if not isinstance(plan, list) or len(plan) != len(growth.RHYTHMS[service]):
+            raise ValueError("Set a time and on/off for every rhythm activity.")
+        for entry in plan:
+            if (not isinstance(entry, dict) or type(entry.get("on")) is not bool or not isinstance(entry.get("time"), str)
+                    or not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", entry["time"])):
+                raise ValueError("Each rhythm activity needs an HH:MM time and on or off.")
+        config["rhythm"] = [{"time": entry["time"], "on": entry["on"]} for entry in plan]
     for key in ("auto_rooms", "auto_linkedin", "full_rhythm", "proof_consent", "partner_enabled"):
         if key in payload:
             if type(payload[key]) is not bool:

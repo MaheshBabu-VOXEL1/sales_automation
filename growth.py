@@ -259,6 +259,13 @@ def save_item(db, run, item_id, payload):
     return dict(run(db, "SELECT * FROM growth_items WHERE id=?", (item_id,)).fetchone())
 
 
+def rhythm_plan(service, config):
+    """The service's rhythm with the time and on/off saved for each activity in its Sales Goal."""
+    saved = config.get("rhythm") or []
+    return [(saved[i]["time"] if i < len(saved) else time, label, title, purpose, saved[i]["on"] if i < len(saved) else True)
+            for i, (time, label, title, purpose) in enumerate(RHYTHMS[service])]
+
+
 def generate_rhythm(db, run, service, instant=None):
     """Claim each template slot transactionally; never execute its business activity."""
     if service not in SERVICES:
@@ -267,7 +274,10 @@ def generate_rhythm(db, run, service, instant=None):
         return {"created": 0}
     day = (instant or datetime.now(timezone.utc)).astimezone(IST).date().isoformat()
     created = 0
-    for slot, (time, label, title, purpose) in enumerate(RHYTHMS[service]):
+    campaign = run(db, "SELECT config FROM agent_campaigns WHERE service=?", (service,)).fetchone()
+    for slot, (time, label, title, purpose, on) in enumerate(rhythm_plan(service, json.loads(campaign["config"]) if campaign else {})):
+        if not on:
+            continue
         claim = run(db, """INSERT INTO growth_rhythm_runs (service, day, slot)
             VALUES (?, ?, ?) ON CONFLICT(service, day, slot) DO NOTHING RETURNING slot""", (service, day, slot)).fetchone()
         if not claim:

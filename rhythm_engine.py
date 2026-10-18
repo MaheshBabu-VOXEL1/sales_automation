@@ -302,9 +302,9 @@ def tick(api, instant=None, phase="drafts"):
         service, config = row["service"], json.loads(row["config"])
         if not config.get("full_rhythm") or day < config["start"] or (config["end"] and day > config["end"]):
             continue
-        for slot, (scheduled, _, _, _) in enumerate(growth.RHYTHMS[service]):
+        for slot, (scheduled, _, _, _, on) in enumerate(growth.rhythm_plan(service, config)):
             research_slot = slot in ((0, 1) if service == "bim" else (0,))
-            if research_slot != (phase == "research") or clock < scheduled:
+            if not on or research_slot != (phase == "research") or clock < scheduled:
                 continue
             job = f"rhythm:{slot}"
             if not claim(api, service, day, job):

@@ -200,18 +200,15 @@ function header(s) {
   const badge = paused(s.id) ? '<span class="badge cold">Paused</span>' : n ? `<span class="badge warn">${n} need${n === 1 ? "s" : ""} you</span>` : '<span class="badge ok">Active</span>';
   const leads = activeLeads(s.id);
   const pipeline = leads.filter((l) => ["engaged", "meeting", "proposal", "negotiation"].includes(detail(l.id).stage)).length;
-  const status = slots(s);
-  const done = status.filter((x) => x.kind === "done").length;
-  const stuck = status.map((x, index) => [x, S.growth.rhythm_templates[s.id][index]]).filter(([x]) => x.kind === "blocked");
+  const plan = todayRows(s.id).filter((r) => r.kind === "task");
+  const done = plan.filter((r) => r.state === "done").length;
   const goal = st.goal, won = wonCount(s.id);
   const seg = goal ? `<span class="seg">${Array.from({ length: Math.min(goal, 20) }, (_, i) => `<i class="${i < won ? "won" : ""}"></i>`).join("")}</span>` : '<span>Set a goal to track progress</span>';
   const next = items(s.id, "task").filter((i) => i.state === "pending").sort(byDue)[0];
   const now = paused(s.id)
     ? `<b>Paused.</b> New searches, approvals and task completion are blocked until you resume. A search already running is not cancelled.`
-    : stuck.length ? `<b>Blocked:</b> ${esc(stuck[0][1][2])} <span class="muted">· ${esc(stuck[0][0].label)}${stuck.length > 1 ? ` · ${stuck.length - 1} more blocked` : ""}</span>`
-    : n ? `<b>Needs approval:</b> ${n} draft${n === 1 ? "" : "s"} waiting for you.`
     : next ? `<b>Next:</b> ${esc(next.title)} <span class="muted">· ${esc(fmtWhen(next))}${next.owner ? " · " + esc(next.owner) : ""}</span>`
-      : `<b>No open tasks.</b> The rhythm is running; nothing needs you right now.`;
+      : `<b>No open tasks.</b> View live agent jobs or add today’s task plan from Daily rhythm.`;
   return `<div class="crumb">Growth Engine <span>/</span> ${S.lead ? `<button type="button" data-act="back">${esc(s.name)}</button> <span>/</span> Lead room` : esc(s.name)}</div>
   <div class="ph">
     <div class="ph-l"><span class="av lg av-${s.id === "training" ? "train" : s.id}">${s.code}</span><div style="min-width:0"><div class="title-row"><h1>${esc(s.name)}</h1>${badge}</div><p>${esc(st.strategy || "No strategy written yet.")}</p></div></div>
@@ -221,8 +218,8 @@ function header(s) {
     <div class="kpi"><span>Sales goal ${esc(S.growth.sales_progress?.[s.id]?.quarter || "(all time)")}</span><b>${won}<small> / ${goal}</small></b>${seg}</div>
     <div class="kpi"><span>Active leads</span><b>${leads.length}</b><span>${leads.filter((l) => l.email || l.phone).length} with email or phone</span></div>
     <div class="kpi"><span>In pipeline</span><b>${pipeline}</b><span>engaged to negotiation</span></div>
-    <div class="kpi"><span>Today’s rhythm</span><b>${done}<small> / ${status.length}</small></b><span>activities done</span></div>
-    <div class="kpi ${n || stuck.length ? "warn" : ""}"><span>Needs you</span><b>${n + stuck.length}</b><span>${n} to approve · ${stuck.length} blocked</span></div>
+    <div class="kpi"><span>Today’s plan</span><b>${done}<small> / ${plan.length}</small></b><span>tasks done</span></div>
+    <div class="kpi ${n ? "warn" : ""}"><span>Needs you</span><b>${n}</b><span>drafts to approve</span></div>
   </section>
   <div class="now"><span class="pulse${paused(s.id) || !next ? " off" : ""}"></span><span>${now}</span></div>`;
 }
@@ -300,100 +297,75 @@ function agentPanel(s) {
     }).join("") : '<tr><td colspan="4" class="empty-cell">No jobs have run yet.</td></tr>'}</tbody></table></div></section>`;
 }
 
-const istDay = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+// The service's rhythm with each activity's time and on/off from its Sales Goal.
+const rhythmPlan = (id) => {
+  const saved = S.growth.campaigns.find((c) => c.service === id)?.rhythm || [];
+  return S.growth.rhythm_templates[id].map(([time, label, title, purpose], i) => ({ time: saved[i]?.time || time, label, title, purpose, on: saved[i]?.on ?? true }));
+};
 
-// Where one automated rhythm activity stands today: off, scheduled, running, done, approval (drafts wait for
-// you) or blocked (the rhythm cannot move on without you; reason and fix included).
-function slotStatus(s, index) {
-  const time = S.growth.rhythm_templates[s.id][index][0];
-  const day = istDay();
+function rhythmResult(s, index, scheduled) {
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const campaign = S.growth.campaigns.find((c) => c.service === s.id);
-  const fix = '<button class="btn sm" type="button" data-act="campaign">Fix in Sales Goal</button>';
-  if (!campaign?.full_rhythm) return { kind: "off", label: "Not automated" };
   const job = S.growth.jobs.find((j) => j.service === s.id && j.day === day && j.job === `rhythm:${index}`);
+  if (!rhythmPlan(s.id)[index].on) return '<td>Off</td><td class="note">Turned off in Sales Goal.</td>';
+  if (!campaign?.full_rhythm) return '<td><span class="note">Draft rhythm disabled</span></td><td class="note">Enable Complete draft rhythm in Sales Goal.</td>';
   if (!job) {
-    if (paused(s.id)) return { kind: "blocked", label: "Paused", reason: "This workspace is paused, so the rhythm is not running.", action: '<button class="btn sm" type="button" data-act="pause">Resume</button>' };
-    if (day < campaign.start || (campaign.end && day > campaign.end)) return { kind: "blocked", label: "Not running", reason: "Today is outside the campaign dates.", action: fix };
-    if (index === (s.id === "bim" ? 5 : 1) && campaign.partner_enabled === false) return { kind: "off", label: "Off", reason: "Partner activity is turned off in Sales Goal." };
-    if (index === (s.id === "bim" ? 8 : 5) && !Object.values(campaign.content_targets || {}).some((v) => v > 0)) return { kind: "off", label: "Off", reason: "No social drafts requested: daily targets are 0 in Sales Goal." };
-    return { kind: "scheduled", label: `Scheduled ${time}` };
+    if (paused(s.id)) return '<td>Paused</td><td class="note">Resume the workspace to run scheduled activities.</td>';
+    if (day < campaign.start || (campaign.end && day > campaign.end)) return '<td>Outside campaign dates</td><td class="note">Review the campaign start and end dates in Sales Goal.</td>';
+    if (index === (s.id === "bim" ? 5 : 1) && campaign.partner_enabled === false) return '<td>Disabled</td><td class="note">Partner activity is optional and disabled in Sales Goal.</td>';
+    const socialSlot = s.id === "bim" ? 8 : 5;
+    if (index === socialSlot && !Object.values(campaign.content_targets || {}).some((v) => v > 0)) return '<td>Disabled (0 targets)</td><td class="note">No social drafts requested. Set daily targets in Sales Goal to enable them.</td>';
+    return `<td>Scheduled / waiting</td><td class="note">${esc(scheduled)} IST during campaign dates.</td>`;
   }
-  const r = JSON.parse(job.result || "{}");
-  const outputs = (r.item_ids || (r.item_id ? [r.item_id] : [])).map(item).filter(Boolean);
-  const waiting = outputs.filter((i) => i.state === "pending");
-  const reason = [r.message, ...(r.issues || [])].filter(Boolean).join(" ");
-  if (job.state === "running") return { kind: "running", label: "Running", outputs };
-  if (job.state === "needs_input") return { kind: "blocked", label: "Needs your input", reason, action: fix, outputs };
-  if (job.state === "needs_budget") return { kind: "blocked", label: "Out of budget", reason: reason || "The monthly provider allowance is used up.", outputs };
-  if (job.state === "needs_you") return { kind: "blocked", label: "Failed", reason: reason || "The activity failed and was not retried.", outputs };
-  if (waiting.length) return { kind: "approval", label: "Needs approval", reason: `${waiting.length} draft${waiting.length === 1 ? "" : "s"} waiting for you.`, action: `<button class="btn sm pri" type="button" data-act="review-output" data-output="${waiting[0].id}">Review</button>`, outputs };
-  return { kind: "done", label: job.state === "no_action" ? "Done · nothing to do" : "Done", reason, outputs };
+  const result = JSON.parse(job.result || "{}");
+  const outputs = (result.item_ids || []).map(item).filter(Boolean);
+  const reviewed = outputs.length && outputs.every((i) => ["approved", "done"].includes(i.state));
+  const state = ["needs_you", "needs_input", "needs_budget"].includes(job.state) ? job.state.replaceAll("_", " ") : reviewed ? "Reviewed" : job.state.replaceAll("_", " ");
+  return `<td><b>${esc(state)}</b></td><td><span class="sub">${esc(result.message || "Job is running.")}</span>${(result.issues || []).map((v) => `<span class="sub">${esc(v)}</span>`).join("")}${outputs.map((i) => `<button class="linkish" data-act="review-output" data-output="${i.id}">${esc(i.title)}</button>`).join("<br>")}</td>`;
 }
-const slots = (s) => S.growth.rhythm_templates[s.id].map((_, index) => slotStatus(s, index));
-const SLOT_PILL = { off: "later", scheduled: "later", running: "run", done: "done", approval: "you", blocked: "stop" };
 
 function rhythm(s) {
-  const t = today();
+  const schedule = S.growth.rhythm_settings.find((r) => r.service === s.id);
+  const full = S.growth.campaigns.find((c) => c.service === s.id)?.full_rhythm;
   const rows = todayRows(s.id);
-  const later = items(s.id, "task").filter((i) => i.state === "pending" && i.due && i.due > t).sort(byDue);
-  const templates = S.growth.rhythm_templates[s.id];
-  const status = slots(s);
-  const automated = status.some((x) => x.kind !== "off" || x.label !== "Not automated");
+  const later = items(s.id, "task").filter((i) => i.state === "pending" && i.due && i.due > today()).sort(byDue);
   const groups = [["Marketing", ["Marketing"]], ["Content", ["Content"]], ["BD", ["BD"]], ["Outreach", ["Outreach"]], ["Sales", ["Sales", "Account"]]];
+  const tasks = rows.filter((r) => r.kind === "task");
   const phases = groups.map(([name, labels]) => {
-    const it = templates.map((tpl, index) => [tpl[1], status[index]]).filter(([label]) => labels.includes(label));
-    const d = it.filter(([, x]) => x.kind === "done").length;
+    const it = tasks.filter((r) => labels.includes(r.label));
+    const d = it.filter((r) => r.state === "done").length;
     return `<div class="phs"><div class="h"><span class="ty ${name}">${name === "Sales" ? "Sales &amp; account" : name}</span><span class="num">${d}/${it.length}</span></div><div class="mbar"><i style="width:${it.length ? (d / it.length) * 100 : 0}%"></i></div></div>`;
   }).join("");
-  const chip = (label) => label ? `<span class="ty ${esc(label)}">${esc(label)}</span>` : '<span class="ty plain">Task</span>';
-  const line = ({ cls = "", mark, time, type, title, sub = "", tip = "", right = "", open = "" }) =>
-    `<li class="dl ${cls}">${mark}<span class="dl-t">${esc(time)}</span><span class="dl-ty">${type}</span><span class="dl-a"${tip ? ` title="${esc(tip)}"` : ""}><b>${esc(title)}</b>${sub ? `<span class="dl-s">${sub}</span>` : ""}</span><span class="dl-r">${right}</span>${open ? `<div class="dl-open">${open}</div>` : ""}</li>`;
-  const when = (i) => i.due && i.due < t ? fmtDate(i.due) : i.due && i.due > t ? `${fmtDate(i.due)}${i.due_time ? " " + i.due_time : ""}` : i.due_time || "—";
-  // Tasks and drafts people work on themselves; rhythm activities never get a tick.
-  const itemLine = (i) => {
+  const row = (i) => {
     const l = i.lead_id ? lead(i.lead_id) : null;
-    const leadSub = l ? `Lead: <button class="linkish" type="button" data-lead="${l.id}">${esc(l.company)}</button>` : "";
-    if (i.kind !== "task") {
-      return line({ mark: '<span class="dl-m draft" title="Draft for your review"></span>', time: when(i), type: chip(i.kind === "brief" ? "Brief" : i.kind === "room" ? "Lead room" : i.kind === "content" ? "Content" : "Outreach"),
-        title: i.title, sub: leadSub || `${esc(i.channel)} draft`, right: `${itemStatus(i)}<button class="btn sm" type="button" data-item="toggle" data-id="${i.id}">${S.open[i.id] ? "Close" : "Review"}</button>`,
-        open: S.open[i.id] ? draftText(i) + itemButtons(i) : "" });
-    }
-    const pending = i.state === "pending";
-    const flag = i.state === "done" ? "" : i.state === "rejected" ? stHtml("later", "Skipped") : i.due && i.due < t ? stHtml("you", "Overdue") : "";
-    return line({ cls: i.state === "done" ? "done" : i.state === "rejected" ? "skipped" : "",
-      mark: `<button class="dl-m chk${i.state === "done" ? " on" : ""}" type="button" data-item="${pending ? "complete" : "reopen"}" data-id="${i.id}" aria-label="${pending ? "Mark done" : "Reopen"}: ${esc(i.title)}" title="${pending ? "Mark done" : "Reopen"}"></button>`,
-      time: when(i), type: chip(i.label), title: i.title, sub: leadSub, tip: i.body,
-      right: `${flag}${pending ? `<button class="linkish dl-x" type="button" data-item="edit" data-id="${i.id}">Edit</button><button class="linkish dl-x" type="button" data-item="reject" data-id="${i.id}">Skip</button>` : ""}` });
+    const typeCell = i.kind === "task" ? (i.label ? `<span class="ty ${esc(i.label)}">${esc(i.label)}</span>` : '<span class="ty plain">Task</span>') : `<span class="ty Content">${i.kind === "brief" ? "Review brief" : i.kind === "room" ? "Lead room" : i.kind === "content" ? "Content" : "Outreach"}</span>`;
+    return `<tr><td class="t">${esc(fmtWhen(i))}</td><td>${typeCell}</td>
+      <td><b class="strong">${esc(i.title)}</b>${l ? `<span class="sub">Lead: <button class="linkish" type="button" data-lead="${l.id}">${esc(l.company)}</button></span>` : ""}${i.kind !== "task" ? `<span class="sub">${esc(i.channel)} draft${i.label ? " · " + esc(i.label) : ""}</span>` : ""}${draftText(i)}${itemButtons(i)}</td>
+      <td>${who(i.owner)}</td><td>${itemStatus(i)}</td></tr>`;
   };
-  // Tasks the older manual planner made from the rhythm (same title, today) and drafts an activity produced are
-  // shown through that activity's line, not repeated.
-  const used = new Set();
-  const entries = templates.map(([time, label, title, purpose], index) => {
-    const x = status[index];
-    rows.filter((r) => r.kind === "task" && r.due === t && r.title === title).forEach((r) => used.add(r.id));
-    (x.outputs || []).forEach((o) => used.add(o.id));
-    const blocked = x.kind === "blocked";
-    return { key: "1" + time, html: line({ cls: `slot ${x.kind}`, mark: `<span class="dl-m ${x.kind}" aria-hidden="true"></span>`, time, type: chip(label), title,
-      sub: esc(blocked || x.kind === "approval" ? x.reason : purpose), tip: [purpose, x.reason].filter(Boolean).join(" — "),
-      right: stHtml(SLOT_PILL[x.kind], x.label) + (x.action || "") }) };
-  });
-  rows.filter((r) => !used.has(r.id)).forEach((r) => entries.push({ key: (r.due && r.due < t ? "0" : "1") + (r.due_time || "99:99"), html: itemLine(r) }));
-  entries.sort((x, y) => x.key.localeCompare(y.key));
-  const blocked = status.filter((x) => x.kind === "blocked").length;
-  const approvals = pendingDrafts(s.id).length;
-  const alert = !automated
-    ? `<p class="blocked dl-alert">The rhythm is not automated yet, so none of these activities will run. Turn on <b>Complete draft rhythm</b> in Sales Goal. <button class="btn sm" type="button" data-act="campaign">Open Sales Goal</button></p>`
-    : blocked ? `<p class="stopped dl-alert"><b>${blocked} activit${blocked === 1 ? "y is" : "ies are"} blocked.</b> The rhythm cannot move on until you fix ${blocked === 1 ? "it" : "them"}; see the red lines below.</p>` : "";
   return `${agentPanel(s)}<section class="panel">
-    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">${status.filter((x) => x.kind === "done").length} of ${templates.length} done today${approvals ? ` · ${approvals} need${approvals === 1 ? "s" : ""} approval` : ""}${blocked ? ` · ${blocked} blocked` : ""}. The automation runs each activity; nothing is sent or published without your approval. Times IST.</span></div>
-      <div class="actions"><button class="btn" type="button" data-act="edit-goal">Sales Goal</button><button class="btn pri" type="button" data-act="new-task">New task</button></div></div>
-    ${alert}<div class="phases">${phases}</div>
-    <ol class="day">${entries.map((e) => e.html).join("")}</ol>
-    <div class="panel-f"><label class="fshow"><input type="checkbox" id="show-done-tasks" ${S.showDoneTasks ? "checked" : ""}> Show all completed and skipped tasks</label><span class="note">Tasks you add with <b>New task</b> are yours to tick off; rhythm activities update themselves. The worker runs while the server is awake and respects pause. <a href="/draft-rhythm-guide" target="_blank" rel="noopener">Workflow setup and limits</a></span></div>
+    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">${full ? "Runs daily during campaign dates, through review drafts. Sending and publishing are separate." : "Reference schedule; enable Complete draft rhythm in Sales Goal for execution."} All times IST (Asia/Kolkata).</span></div>
+      <div class="actions"><button class="btn" type="button" data-act="campaign">Edit rhythm</button>${full ? "" : `<button class="btn" type="button" data-act="auto-rhythm">${schedule.enabled ? "Disable daily planning" : "Enable daily planning"}</button><button class="btn pri" type="button" data-act="routine">Add rhythm to today’s plan</button>`}</div></div>
+    <div class="tw"><table><thead><tr><th>Time (IST)</th><th>Type</th><th>Activity and purpose</th><th>Draft workflow status</th><th>Outputs / next action</th></tr></thead>
+      <tbody>${rhythmPlan(s.id).map((a, index) => ({ ...a, index })).sort((x, y) => x.time.localeCompare(y.time)).map(({ time, label, title, purpose, on, index }) => `<tr${on ? "" : ' class="off"'}><td class="t">${esc(time)}</td><td><span class="ty ${esc(label)}">${esc(label)}</span></td><td><b class="strong">${esc(title)}</b><span class="sub">${esc(purpose)}</span></td>${rhythmResult(s, index, time)}</tr>`).join("")}</tbody>
+    </table></div><div class="panel-f"><span class="note">${full ? "Each activity shows saved drafts, research coverage, or missing input/budget. Review outputs before use. The worker stays available while the server runs and respects pause." : (schedule.enabled ? "Manual task planning enabled for weekdays." : "Manual task planning is disabled.")} Missed days are not backfilled. <a href="/draft-rhythm-guide" target="_blank" rel="noopener">Workflow setup and limits</a></span></div>
+  </section>
+  <section class="panel">
+    <div class="panel-h"><div><h2>Today’s plan</h2><span class="note">Saved tasks and generated drafts awaiting your review.</span></div>
+      <div class="actions"><button class="btn" type="button" data-act="routine">Add rhythm to today’s plan</button><button class="btn pri" type="button" data-act="new-task">New task</button></div></div>
+    <div class="phases">${phases}</div>
+    <div class="tw"><table>
+      <thead><tr><th>When</th><th>Type</th><th>Activity</th><th>Owner</th><th>Status</th></tr></thead>
+      <tbody>${rows.length ? rows.map(row).join("") : `<tr><td colspan="5" class="empty-cell">Nothing planned for today. Use <b>New task</b>, or <b>Add rhythm to today’s plan</b> to create the reference rhythm tasks for ${esc(s.name)}.</td></tr>`}</tbody>
+    </table></div>
+    <div class="panel-f"><label class="fshow"><input type="checkbox" id="show-done-tasks" ${S.showDoneTasks ? "checked" : ""}> Show all completed and skipped tasks</label></div>
   </section>
   <section class="panel">
     <div class="panel-h"><h2>Coming up</h2><span class="note">${later.length} scheduled task${later.length === 1 ? "" : "s"}</span></div>
-    ${later.length ? `<ol class="day">${later.map(itemLine).join("")}</ol>` : '<p class="empty-cell">No future tasks.</p>'}
+    <div class="tw"><table>
+      <thead><tr><th>When</th><th>Type</th><th>Activity</th><th>Owner</th><th>Status</th></tr></thead>
+      <tbody>${later.length ? later.map(row).join("") : '<tr><td colspan="5" class="empty-cell">No future tasks.</td></tr>'}</tbody>
+    </table></div>
   </section>`;
 }
 
@@ -938,6 +910,10 @@ async function act(el) {
           { name: "quarter", label: "Sales quarter (YYYY-Q1 to YYYY-Q4)", value: c?.quarter || `${year}-Q${Math.ceil(month / 3)}`, required: true, max: 7 },
           { name: "strategy", label: "Strategy", type: "textarea", rows: 3, max: 1000, value: st.strategy, full: true },
           { name: "full_rhythm", label: "Complete draft rhythm", type: "select", options: [["no", "Keep current discovery / selected drafting"], ["yes", "Automate all rhythm activities up to review drafts"]], value: c?.full_rhythm ? "yes" : "no", full: true },
+          ...rhythmPlan(s.id).flatMap((a, i) => [
+            { name: `rhythm_on_${i}`, label: `Rhythm: ${a.title}`, type: "select", options: [["yes", "On"], ["no", "Off"]], value: a.on ? "yes" : "no" },
+            { name: `rhythm_time_${i}`, label: "Time (IST)", type: "time", value: a.time, required: true },
+          ]),
           { name: "objective", label: "Service focus and campaign objective", value: c?.objective || t.goal || "", required: true, max: 500, full: true },
           { name: "countries", label: "Target countries (comma separated)", value: t.countries.join(", "), required: true },
           { name: "industries", label: "Industries (comma separated: architecture, construction, engineering, real_estate, education)", value: t.categories.join(", "), required: true, full: true },
@@ -964,6 +940,7 @@ async function act(el) {
         ], submitLabel: "Save Sales Goal and activate",
         submit: (v) => api(`/api/growth/campaign/${s.id}`, { method: "PUT", body: JSON.stringify({ ...v, goal: Number(v.goal), accept_budget: true, auto_rooms: v.auto_rooms === "yes", auto_linkedin: v.auto_linkedin === "yes", full_rhythm: v.full_rhythm === "yes", proof_consent: v.proof_consent === "yes", partner_enabled: v.partner_enabled === "yes",
           content_targets: Object.fromEntries(["LinkedIn", "Instagram", "Facebook"].map((channel) => [channel, Number(v[`posts_${channel}`])])),
+          rhythm: rhythmPlan(s.id).map((_, i) => ({ time: v[`rhythm_time_${i}`], on: v[`rhythm_on_${i}`] === "yes" })),
           targeting: { ...t, categories: v.industries.split(",").map((x) => x.trim()).filter(Boolean), countries: v.countries.split(",").map((x) => x.trim()).filter(Boolean), keywords: v.keywords, titles: v.titles, exclusions: v.exclusions, employee_min: v.employee_min, employee_max: v.employee_max, goal: v.objective } }) }),
       }); return;
     }
@@ -1008,7 +985,7 @@ async function act(el) {
       return;
     }
     case "routine": {
-      await run(() => api(`/api/growth/rhythm/${s.id}`, { method: "POST", body: "{}" }), (result) => `${result.created} tasks added to today’s rhythm list (IST).`).catch(() => {});
+      await run(() => api(`/api/growth/rhythm/${s.id}`, { method: "POST", body: "{}" }), (result) => `${result.created} tasks added to today’s plan (IST).`).catch(() => {});
       return;
     }
     case "icp": openIcp(); return;
