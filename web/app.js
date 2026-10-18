@@ -306,46 +306,37 @@ function rhythmResult(s, index, scheduled) {
   const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const campaign = S.growth.campaigns.find((c) => c.service === s.id);
   const job = S.growth.jobs.find((j) => j.service === s.id && j.day === day && j.job === `rhythm:${index}`);
-  if (!rhythmPlan(s.id)[index].on) return '<td>Off</td><td class="note">Turned off in Sales Goal.</td>';
-  if (!campaign?.full_rhythm) return '<td><span class="note">Draft rhythm disabled</span></td><td class="note">Enable Complete draft rhythm in Sales Goal.</td>';
+  const cells = (cls, label, note = "", approval = '<span class="muted">—</span>') =>
+    `<td>${stHtml(cls, label)}${note ? `<span class="sub">${esc(note)}</span>` : ""}</td><td>${approval}</td>`;
+  if (!rhythmPlan(s.id)[index].on) return cells("later", "Off", "Turned off in Sales Goal.");
+  if (!campaign?.full_rhythm) return cells("later", "Automation off", "Turn on Complete draft rhythm in Sales Goal.");
   if (!job) {
-    if (paused(s.id)) return '<td>Paused</td><td class="note">Resume the workspace to run scheduled activities.</td>';
-    if (day < campaign.start || (campaign.end && day > campaign.end)) return '<td>Outside campaign dates</td><td class="note">Review the campaign start and end dates in Sales Goal.</td>';
-    if (index === (s.id === "bim" ? 5 : 1) && campaign.partner_enabled === false) return '<td>Disabled</td><td class="note">Partner activity is optional and disabled in Sales Goal.</td>';
-    const socialSlot = s.id === "bim" ? 8 : 5;
-    if (index === socialSlot && !Object.values(campaign.content_targets || {}).some((v) => v > 0)) return '<td>Disabled (0 targets)</td><td class="note">No social drafts requested. Set daily targets in Sales Goal to enable them.</td>';
-    return `<td>Scheduled / waiting</td><td class="note">${esc(scheduled)} IST during campaign dates.</td>`;
+    if (paused(s.id)) return cells("you", "Paused", "Resume the workspace to run it.");
+    if (day < campaign.start || (campaign.end && day > campaign.end)) return cells("later", "Outside campaign dates");
+    if (index === (s.id === "bim" ? 5 : 1) && campaign.partner_enabled === false) return cells("later", "Off", "Partner activity is turned off in Sales Goal.");
+    if (index === (s.id === "bim" ? 8 : 5) && !Object.values(campaign.content_targets || {}).some((v) => v > 0)) return cells("later", "Off", "No social posts requested in Sales Goal.");
+    return cells("later", `Scheduled ${scheduled}`);
   }
   const result = JSON.parse(job.result || "{}");
-  const outputs = (result.item_ids || []).map(item).filter(Boolean);
-  const reviewed = outputs.length && outputs.every((i) => ["approved", "done"].includes(i.state));
-  const state = ["needs_you", "needs_input", "needs_budget"].includes(job.state) ? job.state.replaceAll("_", " ") : reviewed ? "Reviewed" : job.state.replaceAll("_", " ");
-  return `<td><b>${esc(state)}</b></td><td><span class="sub">${esc(result.message || "Job is running.")}</span>${(result.issues || []).map((v) => `<span class="sub">${esc(v)}</span>`).join("")}${outputs.map((i) => `<button class="linkish" data-act="review-output" data-output="${i.id}">${esc(i.title)}</button>`).join("<br>")}</td>`;
+  const outputs = (result.item_ids || (result.item_id ? [result.item_id] : [])).map(item).filter(Boolean);
+  const note = [result.message, ...(result.issues || [])].filter(Boolean).join(" ");
+  const approval = outputs.length ? outputs.map((i) => `<div class="appr"><button class="linkish" type="button" data-item="toggle" data-id="${i.id}">${esc(i.title)}</button>
+    ${i.state === "pending" ? `<span class="appr-b"><button class="btn sm pri" type="button" data-item="approve" data-id="${i.id}">Approve</button><button class="btn sm" type="button" data-item="reject" data-id="${i.id}">Reject</button></span>`
+      : i.state === "rejected" ? stHtml("later", "Rejected") : i.state === "done" ? stHtml("done", "Sent / posted") : stHtml("done", "Approved")}${draftText(i)}</div>`).join("") : undefined;
+  if (job.state === "running") return cells("run", "Running", "", approval);
+  if (job.state === "needs_input") return cells("you", "Needs input", note, approval);
+  if (job.state === "needs_budget") return cells("you", "Out of budget", note, approval);
+  if (job.state === "needs_you") return cells("you", "Failed", note, approval);
+  return cells("done", "Done", outputs.length ? "" : note, approval);
 }
 
 function rhythm(s) {
   const schedule = S.growth.rhythm_settings.find((r) => r.service === s.id);
-  const full = S.growth.campaigns.find((c) => c.service === s.id)?.full_rhythm;
-  const drafts = pendingDrafts(s.id).sort(byDue);
-  const row = (i) => {
-    const l = i.lead_id ? lead(i.lead_id) : null;
-    const kind = i.kind === "brief" ? "Review brief" : i.kind === "room" ? "Lead room" : i.kind === "content" ? "Content" : "Outreach";
-    return `<tr><td><span class="ty Content">${kind}</span></td>
-      <td><b class="strong">${esc(i.title)}</b>${l ? `<span class="sub">Lead: <button class="linkish" type="button" data-lead="${l.id}">${esc(l.company)}</button></span>` : ""}<span class="sub">${esc(i.channel)} draft${i.label ? " · " + esc(i.label) : ""}</span>${draftText(i)}
-      <div class="actions">${i.body ? `<button class="btn" data-item="toggle" data-id="${i.id}">${S.open[i.id] ? "Hide text" : "View text"}</button>` : ""}<button class="btn pri" data-item="approve" data-id="${i.id}">Approve</button><button class="btn" data-item="reject" data-id="${i.id}">Reject</button></div></td></tr>`;
-  };
-  return `${agentPanel(s)}<section class="panel">
-    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">${full ? "Runs daily during campaign dates, through review drafts. Sending and publishing are separate." : "Reference schedule; enable Complete draft rhythm in Sales Goal for execution."} All times IST (Asia/Kolkata).</span></div>
+  return `<section class="panel">
+    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">Status and approvals for today. Set times and turn activities on or off with Edit rhythm. All times IST.</span></div>
       <div class="actions"><button class="btn" type="button" data-act="campaign">Edit rhythm</button>${schedule.enabled ? '<button class="btn" type="button" data-act="auto-rhythm">Turn off daily planning</button>' : ""}</div></div>
-    <div class="tw"><table><thead><tr><th>Time (IST)</th><th>Type</th><th>Activity and purpose</th><th>Draft workflow status</th><th>Outputs / next action</th></tr></thead>
+    <div class="tw"><table><thead><tr><th>Time (IST)</th><th>Type</th><th>Activity and purpose</th><th>Status</th><th>Approval</th></tr></thead>
       <tbody>${rhythmPlan(s.id).map((a, index) => ({ ...a, index })).sort((x, y) => x.time.localeCompare(y.time)).map(({ time, label, title, purpose, on, index }) => `<tr${on ? "" : ' class="off"'}><td class="t">${esc(time)}</td><td><span class="ty ${esc(label)}">${esc(label)}</span></td><td><b class="strong">${esc(title)}</b><span class="sub">${esc(purpose)}</span></td>${rhythmResult(s, index, time)}</tr>`).join("")}</tbody>
-    </table></div><div class="panel-f"><span class="note">${full ? "Each activity shows saved drafts, research coverage, or missing input/budget. Review outputs before use. The worker stays available while the server runs and respects pause." : "Set times and turn activities on or off with Edit rhythm."} Missed days are not backfilled. <a href="/draft-rhythm-guide" target="_blank" rel="noopener">Workflow setup and limits</a></span></div>
-  </section>
-  <section class="panel">
-    <div class="panel-h"><div><h2>Waiting for your approval</h2><span class="note">Drafts the rhythm prepared. Approve or reject each one; nothing is sent or posted without approval.</span></div></div>
-    <div class="tw"><table>
-      <thead><tr><th>Type</th><th>Draft</th></tr></thead>
-      <tbody>${drafts.length ? drafts.map(row).join("") : '<tr><td colspan="2" class="empty-cell">Nothing waiting for approval.</td></tr>'}</tbody>
     </table></div>
   </section>`;
 }
