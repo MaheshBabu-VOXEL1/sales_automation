@@ -306,37 +306,64 @@ function rhythmResult(s, index, scheduled) {
   const day = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const campaign = S.growth.campaigns.find((c) => c.service === s.id);
   const job = S.growth.jobs.find((j) => j.service === s.id && j.day === day && j.job === `rhythm:${index}`);
-  const cells = (cls, label, note = "", approval = '<span class="muted">—</span>') =>
-    `<td>${stHtml(cls, label)}${note ? `<span class="sub">${esc(note)}</span>` : ""}</td><td>${approval}</td>`;
-  if (!rhythmPlan(s.id)[index].on) return cells("later", "Off", "Turned off in Sales Goal.");
-  if (!campaign?.full_rhythm) return cells("later", "Automation off", "Turn on Complete draft rhythm in Sales Goal.");
+  const info = (cls, label, note = "", extra = {}) => ({ cls, label, note, outputs: [], issues: [], job, ...extra });
+  if (!rhythmPlan(s.id)[index].on) return info("later", "Off", "Turned off in Sales Goal.");
+  if (!campaign?.full_rhythm) return info("later", "Automation off", "Turn on Complete draft rhythm in Sales Goal.");
   if (!job) {
-    if (paused(s.id)) return cells("you", "Paused", "Resume the workspace to run it.");
-    if (day < campaign.start || (campaign.end && day > campaign.end)) return cells("later", "Outside campaign dates");
-    if (index === (s.id === "bim" ? 5 : 1) && campaign.partner_enabled === false) return cells("later", "Off", "Partner activity is turned off in Sales Goal.");
-    if (index === (s.id === "bim" ? 8 : 5) && !Object.values(campaign.content_targets || {}).some((v) => v > 0)) return cells("later", "Off", "No social posts requested in Sales Goal.");
-    return cells("later", `Scheduled ${scheduled}`);
+    if (paused(s.id)) return info("you", "Paused", "The workspace is paused. Resume it to run this activity.");
+    if (day < campaign.start || (campaign.end && day > campaign.end)) return info("later", "Outside campaign dates", "Today is outside the campaign start and end dates in Sales Goal.");
+    if (index === (s.id === "bim" ? 5 : 1) && campaign.partner_enabled === false) return info("later", "Off", "Partner activity is turned off in Sales Goal.");
+    if (index === (s.id === "bim" ? 8 : 5) && !Object.values(campaign.content_targets || {}).some((v) => v > 0)) return info("later", "Off", "No social posts requested in Sales Goal.");
+    return info("later", `Scheduled ${scheduled}`, `Runs at ${scheduled} IST today. Nothing has run yet.`);
   }
   const result = JSON.parse(job.result || "{}");
-  const outputs = (result.item_ids || (result.item_id ? [result.item_id] : [])).map(item).filter(Boolean);
-  const note = [result.message, ...(result.issues || [])].filter(Boolean).join(" ");
-  const approval = outputs.length ? outputs.map((i) => `<div class="appr"><button class="linkish" type="button" data-item="toggle" data-id="${i.id}">${esc(i.title)}</button>
-    ${i.state === "pending" ? `<span class="appr-b"><button class="btn sm pri" type="button" data-item="approve" data-id="${i.id}">Approve</button><button class="btn sm" type="button" data-item="reject" data-id="${i.id}">Reject</button></span>`
-      : i.state === "rejected" ? stHtml("later", "Rejected") : i.state === "done" ? stHtml("done", "Sent / posted") : stHtml("done", "Approved")}${draftText(i)}</div>`).join("") : undefined;
-  if (job.state === "running") return cells("run", "Running", "", approval);
-  if (job.state === "needs_input") return cells("you", "Needs input", note, approval);
-  if (job.state === "needs_budget") return cells("you", "Out of budget", note, approval);
-  if (job.state === "needs_you") return cells("you", "Failed", note, approval);
-  return cells("done", "Done", outputs.length ? "" : note, approval);
+  const extra = { message: result.message || "", issues: result.issues || [], warnings: result.warnings || [],
+    outputs: (result.item_ids || (result.item_id ? [result.item_id] : [])).map(item).filter(Boolean) };
+  if (job.state === "running") return info("run", "Running", "Working on it now.", extra);
+  if (job.state === "needs_input") return info("you", "Needs input", result.message, extra);
+  if (job.state === "needs_budget") return info("you", "Out of budget", result.message, extra);
+  if (job.state === "needs_you") return info("you", "Failed", result.message, extra);
+  return info("done", "Done", extra.outputs.length ? "" : result.message, extra);
 }
 
 function rhythm(s) {
   const schedule = S.growth.rhythm_settings.find((r) => r.service === s.id);
+  const state = (i) => i.state === "pending" ? stHtml("you", "Waiting for approval") : i.state === "rejected" ? stHtml("later", "Rejected") : i.state === "done" ? stHtml("done", "Sent / posted") : stHtml("done", "Approved");
+  const decide = (i) => i.state === "pending" ? `<span class="appr-b"><button class="btn sm pri" type="button" data-item="approve" data-id="${i.id}">Approve</button><button class="btn sm" type="button" data-item="reject" data-id="${i.id}">Reject</button></span>` : state(i);
+  const summary = (outputs) => {
+    if (!outputs.length) return '<span class="muted">—</span>';
+    const waiting = outputs.filter((i) => i.state === "pending");
+    if (waiting.length === 1 && outputs.length === 1) return decide(waiting[0]);
+    if (waiting.length) return stHtml("you", `${waiting.length} of ${outputs.length} to approve`);
+    return outputs.every((i) => i.state === "rejected") ? stHtml("later", "Rejected") : stHtml("done", `${outputs.length} approved / handled`);
+  };
+  const detail = (a, x) => {
+    const when = x.job ? new Date(x.job.updated_at).toLocaleString(undefined, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+    const lines = [x.message, ...(x.issues || []), ...(x.warnings || [])].filter(Boolean);
+    const drafts = x.outputs.map((i) => {
+      const l = i.lead_id ? lead(i.lead_id) : null;
+      return `<div class="slot-draft"><div class="slot-draft-h"><b>${esc(i.title)}</b><span class="muted">${esc(i.channel || "")}${l ? ` · Lead: ${esc(l.company)}` : ""}</span>${decide(i)}</div>${i.body ? `<div class="draft">${esc(i.body)}</div>` : '<p class="muted">No text in this draft.</p>'}</div>`;
+    }).join("");
+    return `<tr class="slot-detail"><td colspan="5">
+      <p><b>What it does:</b> ${esc(a.purpose)}</p>
+      <p><b>Status:</b> ${esc(x.label)}${when ? ` <span class="muted">· last update ${esc(when)}</span>` : ""}</p>
+      ${lines.length ? `<ul>${lines.map((v) => `<li>${esc(v)}</li>`).join("")}</ul>` : x.note ? `<p class="muted">${esc(x.note)}</p>` : ""}
+      ${drafts ? `<p><b>Drafts</b></p>${drafts}` : '<p class="muted">No drafts from this activity today.</p>'}
+    </td></tr>`;
+  };
+  const rows = rhythmPlan(s.id).map((a, index) => ({ ...a, index })).sort((x, y) => x.time.localeCompare(y.time)).map((a) => {
+    const x = rhythmResult(s, a.index, a.time), key = `${s.id}:${a.index}`, open = S.openSlot?.[key];
+    return `<tr class="click${a.on ? "" : " off"}${open ? " open" : ""}" data-act="slot" data-slot="${key}" tabindex="0" aria-expanded="${open ? "true" : "false"}">
+      <td class="t">${esc(a.time)}</td><td><span class="ty ${esc(a.label)}">${esc(a.label)}</span></td>
+      <td><b class="strong">${esc(a.title)}</b><span class="sub">${esc(a.purpose)}</span></td>
+      <td>${stHtml(x.cls, x.label)}${x.note && x.cls === "you" ? `<span class="sub">${esc(x.note)}</span>` : ""}</td>
+      <td>${summary(x.outputs)}</td></tr>${open ? detail(a, x) : ""}`;
+  }).join("");
   return `<section class="panel">
-    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">Status and approvals for today. Set times and turn activities on or off with Edit rhythm. All times IST.</span></div>
+    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">Today's status and approvals. Click an activity to see what happened and read its drafts. All times IST.</span></div>
       <div class="actions"><button class="btn" type="button" data-act="campaign">Edit rhythm</button>${schedule.enabled ? '<button class="btn" type="button" data-act="auto-rhythm">Turn off daily planning</button>' : ""}</div></div>
     <div class="tw"><table><thead><tr><th>Time (IST)</th><th>Type</th><th>Activity and purpose</th><th>Status</th><th>Approval</th></tr></thead>
-      <tbody>${rhythmPlan(s.id).map((a, index) => ({ ...a, index })).sort((x, y) => x.time.localeCompare(y.time)).map(({ time, label, title, purpose, on, index }) => `<tr${on ? "" : ' class="off"'}><td class="t">${esc(time)}</td><td><span class="ty ${esc(label)}">${esc(label)}</span></td><td><b class="strong">${esc(title)}</b><span class="sub">${esc(purpose)}</span></td>${rhythmResult(s, index, time)}</tr>`).join("")}</tbody>
+      <tbody>${rows}</tbody>
     </table></div>
   </section>`;
 }
@@ -835,6 +862,7 @@ async function act(el) {
     return;
   }
   switch (d.act) {
+    case "slot": { S.openSlot = S.openSlot || {}; S.openSlot[d.slot] = !S.openSlot[d.slot]; render(); return; }
     case "review-output": {
       const output = item(Number(d.output));
       if (!output) { notice("Refresh to load this output."); return; }

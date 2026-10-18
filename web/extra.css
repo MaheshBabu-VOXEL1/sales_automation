@@ -108,7 +108,13 @@ tr.off td { opacity: .5; }
 .rhythm-row input[type=time] { height: 30px; }
 /* Rhythm table: approval per activity */
 .btn.sm { height: 28px; padding: 0 12px; font-size: 12px; }
-.appr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 2px 0; }
-.appr + .appr { border-top: 1px dashed var(--line); padding-top: 6px; margin-top: 4px; }
 .appr-b { display: inline-flex; gap: 6px; }
-.appr .draft { flex-basis: 100%; }
+tr.click.open td { background: var(--sub); }
+.slot-detail td { background: var(--sub); padding: 4px 22px 18px !important; }
+.slot-detail p { margin: 8px 0; font-size: 13px; }
+.slot-detail ul { margin: 6px 0 10px; padding-left: 18px; font-size: 13px; }
+.slot-draft { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
+.slot-draft-h { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.slot-draft-h .muted { font-size: 12px; }
+.slot-draft-h .appr-b, .slot-draft-h .st { margin-left: auto; }
+.slot-draft .draft { margin-top: 8px; white-space: pre-wrap; }
