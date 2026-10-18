@@ -328,43 +328,52 @@ function rhythmResult(s, index, scheduled) {
 
 function rhythm(s) {
   const schedule = S.growth.rhythm_settings.find((r) => r.service === s.id);
-  const state = (i) => i.state === "pending" ? stHtml("you", "Waiting for approval") : i.state === "rejected" ? stHtml("later", "Rejected") : i.state === "done" ? stHtml("done", "Sent / posted") : stHtml("done", "Approved");
+  const nowIst = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date());
+  const state = (i) => i.state === "pending" ? stHtml("you", "Waiting for you") : i.state === "rejected" ? stHtml("later", "Rejected") : i.state === "done" ? stHtml("done", "Sent / posted") : stHtml("done", "Approved");
   const decide = (i) => i.state === "pending" ? `<span class="appr-b"><button class="btn sm pri" type="button" data-item="approve" data-id="${i.id}">Approve</button><button class="btn sm" type="button" data-item="reject" data-id="${i.id}">Reject</button></span>` : state(i);
   const summary = (outputs) => {
-    if (!outputs.length) return '<span class="muted">—</span>';
+    if (!outputs.length) return "";
     const waiting = outputs.filter((i) => i.state === "pending");
     if (waiting.length === 1 && outputs.length === 1) return decide(waiting[0]);
     if (waiting.length) return stHtml("you", `${waiting.length} of ${outputs.length} to approve`);
-    return outputs.every((i) => i.state === "rejected") ? stHtml("later", "Rejected") : stHtml("done", `${outputs.length} approved / handled`);
+    return outputs.every((i) => i.state === "rejected") ? stHtml("later", "Rejected") : stHtml("done", `${outputs.length} handled`);
   };
   const detail = (a, x) => {
     const when = x.job ? new Date(x.job.updated_at).toLocaleString(undefined, { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
     const lines = [x.message, ...(x.issues || []), ...(x.warnings || [])].filter(Boolean);
     const drafts = x.outputs.map((i) => {
       const l = i.lead_id ? lead(i.lead_id) : null;
-      return `<div class="slot-draft"><div class="slot-draft-h"><b>${esc(i.title)}</b><span class="muted">${esc(i.channel || "")}${l ? ` · Lead: ${esc(l.company)}` : ""}</span>${decide(i)}</div>${i.body ? `<div class="draft">${esc(i.body)}</div>` : '<p class="muted">No text in this draft.</p>'}</div>`;
+      return `<article class="slot-draft"><header class="slot-draft-h"><b>${esc(i.title)}</b><span class="muted">${esc(i.channel || "")}${l ? ` · ${esc(l.company)}` : ""}</span></header>${i.body ? `<div class="draft">${esc(i.body)}</div>` : '<p class="muted">This draft has no text.</p>'}<footer>${decide(i)}</footer></article>`;
     }).join("");
-    return `<tr class="slot-detail"><td colspan="5">
-      <p><b>What it does:</b> ${esc(a.purpose)}</p>
-      <p><b>Status:</b> ${esc(x.label)}${when ? ` <span class="muted">· last update ${esc(when)}</span>` : ""}</p>
+    return `<div class="tl-detail">
+      <p><b>${esc(x.label)}</b>${when ? `<span class="muted"> · updated ${esc(when)}</span>` : ""}</p>
       ${lines.length ? `<ul>${lines.map((v) => `<li>${esc(v)}</li>`).join("")}</ul>` : x.note ? `<p class="muted">${esc(x.note)}</p>` : ""}
-      ${drafts ? `<p><b>Drafts</b></p>${drafts}` : '<p class="muted">No drafts from this activity today.</p>'}
-    </td></tr>`;
+      ${drafts || '<p class="muted">No drafts from this activity today.</p>'}
+    </div>`;
   };
-  const rows = rhythmPlan(s.id).map((a, index) => ({ ...a, index })).sort((x, y) => x.time.localeCompare(y.time)).map((a) => {
-    const x = rhythmResult(s, a.index, a.time), key = `${s.id}:${a.index}`, open = S.openSlot?.[key];
-    return `<tr class="click${a.on ? "" : " off"}${open ? " open" : ""}" data-act="slot" data-slot="${key}" tabindex="0" aria-expanded="${open ? "true" : "false"}">
-      <td class="t">${esc(a.time)}</td><td><span class="ty ${esc(a.label)}">${esc(a.label)}</span></td>
-      <td><b class="strong">${esc(a.title)}</b><span class="sub">${esc(a.purpose)}</span></td>
-      <td>${stHtml(x.cls, x.label)}${x.note && x.cls === "you" ? `<span class="sub">${esc(x.note)}</span>` : ""}</td>
-      <td>${summary(x.outputs)}</td></tr>${open ? detail(a, x) : ""}`;
-  }).join("");
-  return `<section class="panel">
-    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">Today's status and approvals. Click an activity to see what happened and read its drafts. All times IST.</span></div>
+  const plan = rhythmPlan(s.id).map((a, index) => ({ ...a, index, x: rhythmResult(s, index, a.time) })).sort((p, q) => p.time.localeCompare(q.time));
+  const nowAt = plan.findIndex((a) => a.time > nowIst);
+  const items = plan.map((a) => {
+    const key = `${s.id}:${a.index}`, open = S.openSlot?.[key], x = a.x;
+    const kind = !a.on ? "off" : x.outputs.some((i) => i.state === "pending") ? "wait" : x.cls;
+    return `<li class="tl-item is-${kind}${open ? " open" : ""}">
+      <button class="tl-main" type="button" data-act="slot" data-slot="${key}" aria-expanded="${open ? "true" : "false"}">
+        <span class="tl-time">${esc(a.time)}</span><span class="tl-node" aria-hidden="true"></span>
+        <span class="tl-body"><span class="tl-title" title="${esc(a.title)}"><span class="ty ${esc(a.label)}">${esc(a.label)}</span><span class="tl-name">${esc(a.title)}</span></span><span class="tl-purpose">${esc(x.cls === "you" && x.note ? x.note : a.purpose)}</span></span>
+        <span class="tl-status">${stHtml(x.cls, x.label)}</span>
+      </button>
+      <div class="tl-appr">${summary(x.outputs)}</div>
+      ${open ? detail(a, x) : ""}
+    </li>`;
+  });
+  items.splice(nowAt === -1 ? items.length : nowAt, 0, `<li class="tl-now" aria-label="Current time ${nowIst} IST"><span class="tl-time">${nowIst}</span><span class="tl-now-dot" aria-hidden="true"></span><span class="tl-now-label">Now</span></li>`);
+  const done = plan.filter((a) => a.x.cls === "done").length, on = plan.filter((a) => a.on).length;
+  const waiting = plan.reduce((n, a) => n + a.x.outputs.filter((i) => i.state === "pending").length, 0);
+  const stuck = plan.filter((a) => a.x.cls === "you").length;
+  return `<section class="panel tl-panel">
+    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">${done} of ${on} done today${waiting ? ` · <b class="tl-hl">${waiting} waiting for you</b>` : ""}${stuck ? ` · <b class="tl-hl">${stuck} need${stuck === 1 ? "s" : ""} attention</b>` : ""}. Click an activity to see what happened and read its drafts. Times IST.</span></div>
       <div class="actions"><button class="btn" type="button" data-act="campaign">Edit rhythm</button>${schedule.enabled ? '<button class="btn" type="button" data-act="auto-rhythm">Turn off daily planning</button>' : ""}</div></div>
-    <div class="tw"><table><thead><tr><th>Time (IST)</th><th>Type</th><th>Activity and purpose</th><th>Status</th><th>Approval</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>
+    <ol class="tl">${items.join("")}</ol>
   </section>`;
 }
 
