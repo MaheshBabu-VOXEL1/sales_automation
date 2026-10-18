@@ -330,49 +330,65 @@ function rhythm(s) {
     const d = it.filter((r) => r.state === "done").length;
     return `<div class="phs"><div class="h"><span class="ty ${name}">${name === "Sales" ? "Sales &amp; account" : name}</span><span class="num">${d}/${it.length}</span></div><div class="mbar"><i style="width:${it.length ? (d / it.length) * 100 : 0}%"></i></div></div>`;
   }).join("");
-  const flow = (status) => {
-    if (!status) return "";
+  const t = today();
+  // Status of an automated rhythm slot, or null when the draft rhythm is off and the team works the list by hand.
+  const auto = (status) => {
+    if (!status) return null;
     const [state, notes, outputs = []] = status;
-    return `<span class="sub">Draft workflow: <b>${esc(state)}</b></span>${[].concat(notes).map((v) => `<span class="sub">${esc(v)}</span>`).join("")}${outputs.map((i) => `<button class="linkish" data-act="review-output" data-output="${i.id}">${esc(i.title)}</button>`).join("<br>")}`;
+    const waiting = outputs.filter((i) => i.state === "pending");
+    const lower = String(state).toLowerCase();
+    const cls = waiting.length || lower.startsWith("needs") ? "you" : lower === "running" ? "run" : lower === "reviewed" || lower === "done" ? "done" : "later";
+    const label = waiting.length ? `${waiting.length} draft${waiting.length === 1 ? "" : "s"} to review` : lower.startsWith("scheduled") ? "Scheduled" : state.charAt(0).toUpperCase() + state.slice(1);
+    const review = waiting[0] ? `<button class="btn sm pri" type="button" data-act="review-output" data-output="${waiting[0].id}">Review</button>` : "";
+    return { right: stHtml(cls, label) + review, note: [].concat(notes).join(" ") };
   };
-  const row = (i, extra = "") => {
+  const chip = (label) => label ? `<span class="ty ${esc(label)}">${esc(label)}</span>` : '<span class="ty plain">Task</span>';
+  const line = ({ cls = "", mark, time, type, title, sub = "", tip = "", right = "", open = "" }) =>
+    `<li class="dl ${cls}">${mark}<span class="dl-t">${esc(time)}</span><span class="dl-ty">${type}</span><span class="dl-a"${tip ? ` title="${esc(tip)}"` : ""}><b>${esc(title)}</b>${sub ? `<span class="dl-s">${sub}</span>` : ""}</span><span class="dl-r">${right}</span>${open ? `<div class="dl-open">${open}</div>` : ""}</li>`;
+  const when = (i) => i.due && i.due < t ? fmtDate(i.due) : i.due && i.due > t ? `${fmtDate(i.due)}${i.due_time ? " " + i.due_time : ""}` : i.due_time || "—";
+  const itemLine = (i, purpose = "", status = null) => {
     const l = i.lead_id ? lead(i.lead_id) : null;
-    const typeCell = i.kind === "task" ? (i.label ? `<span class="ty ${esc(i.label)}">${esc(i.label)}</span>` : '<span class="ty plain">Task</span>') : `<span class="ty Content">${i.kind === "brief" ? "Review brief" : i.kind === "room" ? "Lead room" : i.kind === "content" ? "Content" : "Outreach"}</span>`;
-    return `<tr><td class="t">${esc(fmtWhen(i))}</td><td>${typeCell}</td>
-      <td><b class="strong">${esc(i.title)}</b>${l ? `<span class="sub">Lead: <button class="linkish" type="button" data-lead="${l.id}">${esc(l.company)}</button></span>` : ""}${i.kind !== "task" ? `<span class="sub">${esc(i.channel)} draft${i.label ? " · " + esc(i.label) : ""}</span>` : ""}${extra}${draftText(i)}${itemButtons(i)}</td>
-      <td>${who(i.owner)}</td><td>${itemStatus(i)}</td></tr>`;
+    const leadSub = l ? `Lead: <button class="linkish" type="button" data-lead="${l.id}">${esc(l.company)}</button>` : "";
+    const a = auto(status);
+    if (a) return line({ mark: '<span class="dl-m auto" title="Done by the automation"></span>', time: when(i), type: chip(i.label), title: i.title, sub: esc(purpose), tip: a.note || purpose, right: a.right });
+    if (i.kind !== "task") {
+      return line({ mark: '<span class="dl-m draft" title="Draft for your review"></span>', time: when(i), type: chip(i.kind === "brief" ? "Brief" : i.kind === "room" ? "Lead room" : i.kind === "content" ? "Content" : "Outreach"),
+        title: i.title, sub: leadSub || `${esc(i.channel)} draft`, right: `${itemStatus(i)}<button class="btn sm" type="button" data-item="toggle" data-id="${i.id}">${S.open[i.id] ? "Close" : "Review"}</button>`,
+        open: S.open[i.id] ? draftText(i) + itemButtons(i) : "" });
+    }
+    const pending = i.state === "pending";
+    const flag = i.state === "done" ? "" : i.state === "rejected" ? stHtml("later", "Skipped") : i.due && i.due < t ? stHtml("you", "Overdue") : "";
+    return line({ cls: i.state === "done" ? "done" : i.state === "rejected" ? "skipped" : "",
+      mark: `<button class="dl-m chk${i.state === "done" ? " on" : ""}" type="button" data-item="${pending ? "complete" : "reopen"}" data-id="${i.id}" aria-label="${pending ? "Mark done" : "Reopen"}: ${esc(i.title)}" title="${pending ? "Mark done" : "Reopen"}"></button>`,
+      time: when(i), type: chip(i.label), title: i.title, sub: leadSub || esc(purpose), tip: purpose,
+      right: `${flag}${pending ? `<button class="linkish dl-x" type="button" data-item="edit" data-id="${i.id}">Edit</button><button class="linkish dl-x" type="button" data-item="reject" data-id="${i.id}">Skip</button>` : ""}` });
   };
   // One list for the day: each rhythm activity sits in its time slot, as the saved task once it is on today's
   // list (matched by title, as the server does) or as a placeholder until then; other tasks and drafts slot in by time.
-  const t = today();
   const used = new Set();
   const entries = S.growth.rhythm_templates[s.id].map(([time, label, title, purpose], index) => {
     const task = rows.find((r) => r.kind === "task" && r.due === t && r.title === title && !used.has(r.id));
     const status = full ? rhythmResult(s, index, time) : null;
-    if (task) { used.add(task.id); return { key: "1" + (task.due_time || time), html: row(task, flow(status)) }; }
-    return { key: "1" + time, missing: true, html: `<tr class="planned"><td class="t">${esc(time)}</td><td><span class="ty ${esc(label)}">${esc(label)}</span></td>
-      <td><b class="strong">${esc(title)}</b><span class="sub">${esc(purpose)}</span>${flow(status)}</td><td><span class="muted">—</span></td><td><span class="muted">Not on today’s list</span></td></tr>` };
+    (status?.[2] || []).forEach((output) => used.add(output.id)); // its drafts are reviewed from this line
+    if (task) { used.add(task.id); return { key: "1" + (task.due_time || time), html: itemLine(task, purpose, status) }; }
+    const a = auto(status);
+    return { key: "1" + time, missing: !full, html: line({ cls: a ? "" : "planned", mark: `<span class="dl-m ${a ? "auto" : "ring"}"${a ? ' title="Done by the automation"' : ""}></span>`, time, type: chip(label), title, sub: esc(purpose), tip: a?.note || purpose,
+      right: a ? a.right : '<span class="dl-na">Not added</span>' }) };
   });
-  rows.filter((r) => !used.has(r.id)).forEach((r) => entries.push({ key: (r.due && r.due < t ? "0" : "1") + (r.due_time || "99:99"), html: row(r) }));
+  rows.filter((r) => !used.has(r.id)).forEach((r) => entries.push({ key: (r.due && r.due < t ? "0" : "1") + (r.due_time || "99:99"), html: itemLine(r) }));
   entries.sort((x, y) => x.key.localeCompare(y.key));
   const missing = entries.filter((e) => e.missing).length;
   const total = S.growth.rhythm_templates[s.id].length;
   return `${agentPanel(s)}<section class="panel">
-    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">Today’s tasks and drafts awaiting your review, around the ${total}-activity rhythm. ${total - missing} of ${total} rhythm activities are on today’s list. ${full ? "Runs daily during campaign dates, through review drafts. Sending and publishing are separate." : ""} All times IST (Asia/Kolkata).</span></div>
+    <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">${full ? "The automation runs each activity and prepares drafts; you only review what it hands you. Nothing is sent or published without approval." : `${total - missing} of ${total} activities on today’s list. Tick an activity when it is done.`} Times IST.</span></div>
       <div class="actions">${full ? '<button class="btn" type="button" data-act="edit-goal">Edit Sales Goal</button>' : `<button class="btn" type="button" data-act="auto-rhythm">${schedule.enabled ? "Disable daily planning" : "Enable daily planning"}</button>`}${missing ? `<button class="btn" type="button" data-act="routine">Add ${missing === total ? "rhythm" : `remaining ${missing}`} to today</button>` : ""}<button class="btn pri" type="button" data-act="new-task">New task</button></div></div>
     <div class="phases">${phases}</div>
-    <div class="tw"><table>
-      <thead><tr><th>When (IST)</th><th>Type</th><th>Activity</th><th>Owner</th><th>Status</th></tr></thead>
-      <tbody>${entries.map((e) => e.html).join("")}</tbody>
-    </table></div>
-    <div class="panel-f"><label class="fshow"><input type="checkbox" id="show-done-tasks" ${S.showDoneTasks ? "checked" : ""}> Show all completed and skipped tasks</label><span class="note">${full ? "Each activity shows saved drafts, research coverage, or missing input/budget. Review outputs before use. The worker stays available while the server runs and respects pause." : (schedule.enabled ? "Daily planning adds the rhythm to today’s list every weekday from 06:00 IST." : "Daily planning is off; add the rhythm to today manually.")} Missed days are not backfilled. <a href="/draft-rhythm-guide" target="_blank" rel="noopener">Workflow setup and limits</a></span></div>
+    <ol class="day">${entries.map((e) => e.html).join("")}</ol>
+    <div class="panel-f"><label class="fshow"><input type="checkbox" id="show-done-tasks" ${S.showDoneTasks ? "checked" : ""}> Show all completed and skipped tasks</label><span class="note">${full ? "The worker runs while the server is awake and respects pause." : (schedule.enabled ? "Daily planning adds the rhythm to today’s list every weekday from 06:00 IST." : "Daily planning is off; add the rhythm to today manually.")} Missed days are not backfilled. <a href="/draft-rhythm-guide" target="_blank" rel="noopener">Workflow setup and limits</a></span></div>
   </section>
   <section class="panel">
     <div class="panel-h"><h2>Coming up</h2><span class="note">${later.length} scheduled task${later.length === 1 ? "" : "s"}</span></div>
-    <div class="tw"><table>
-      <thead><tr><th>When</th><th>Type</th><th>Activity</th><th>Owner</th><th>Status</th></tr></thead>
-      <tbody>${later.length ? later.map(row).join("") : '<tr><td colspan="5" class="empty-cell">No future tasks.</td></tr>'}</tbody>
-    </table></div>
+    ${later.length ? `<ol class="day">${later.map((i) => itemLine(i)).join("")}</ol>` : '<p class="empty-cell">No future tasks.</p>'}
   </section>`;
 }
 
