@@ -624,6 +624,7 @@ function field(f) {
   const id = `f-${f.name}`;
   const req = f.required ? "required" : "";
   const label = `<span class="flabel">${esc(f.label)}${f.optional ? ' <span class="optional">(optional)</span>' : ""}</span>`;
+  if (f.type === "rhythm") return `<fieldset class="field full rhythm-set"><legend class="flabel">${esc(f.label)}</legend>${f.value.map((a, i) => `<label class="rhythm-row"><input type="checkbox" name="rhythm_on_${i}" ${a.on ? "checked" : ""}><input type="time" name="rhythm_time_${i}" value="${esc(a.time)}" required><span>${esc(a.title)}</span></label>`).join("")}</fieldset>`;
   if (f.type === "textarea") return `<label class="field ${f.full !== false ? "full" : ""}" for="${id}">${label}<textarea id="${id}" name="${f.name}" rows="${f.rows || 5}" maxlength="${f.max || 10000}" ${req}>${esc(f.value || "")}</textarea></label>`;
   if (f.type === "select") return `<label class="field ${f.full ? "full" : ""}" for="${id}">${label}<select id="${id}" name="${f.name}" ${req}>${f.options.map(([v, t]) => `<option value="${esc(v)}" ${String(v) === String(f.value ?? "") ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>`;
   return `<label class="field ${f.full ? "full" : ""}" for="${id}">${label}<input id="${id}" name="${f.name}" type="${f.type || "text"}" value="${esc(f.value ?? "")}" ${f.max ? `maxlength="${f.max}"` : ""} ${f.min !== undefined ? `min="${f.min}"` : ""} ${f.placeholder ? `placeholder="${esc(f.placeholder)}"` : ""} ${req}></label>`;
@@ -910,10 +911,7 @@ async function act(el) {
           { name: "quarter", label: "Sales quarter (YYYY-Q1 to YYYY-Q4)", value: c?.quarter || `${year}-Q${Math.ceil(month / 3)}`, required: true, max: 7 },
           { name: "strategy", label: "Strategy", type: "textarea", rows: 3, max: 1000, value: st.strategy, full: true },
           { name: "full_rhythm", label: "Complete draft rhythm", type: "select", options: [["no", "Keep current discovery / selected drafting"], ["yes", "Automate all rhythm activities up to review drafts"]], value: c?.full_rhythm ? "yes" : "no", full: true },
-          ...rhythmPlan(s.id).flatMap((a, i) => [
-            { name: `rhythm_on_${i}`, label: `Rhythm: ${a.title}`, type: "select", options: [["yes", "On"], ["no", "Off"]], value: a.on ? "yes" : "no" },
-            { name: `rhythm_time_${i}`, label: "Time (IST)", type: "time", value: a.time, required: true },
-          ]),
+          { name: "rhythm", label: "Daily rhythm (tick to run, set the IST time)", type: "rhythm", value: rhythmPlan(s.id) },
           { name: "objective", label: "Service focus and campaign objective", value: c?.objective || t.goal || "", required: true, max: 500, full: true },
           { name: "countries", label: "Target countries (comma separated)", value: t.countries.join(", "), required: true },
           { name: "industries", label: "Industries (comma separated: architecture, construction, engineering, real_estate, education)", value: t.categories.join(", "), required: true, full: true },
@@ -940,7 +938,7 @@ async function act(el) {
         ], submitLabel: "Save Sales Goal and activate",
         submit: (v) => api(`/api/growth/campaign/${s.id}`, { method: "PUT", body: JSON.stringify({ ...v, goal: Number(v.goal), accept_budget: true, auto_rooms: v.auto_rooms === "yes", auto_linkedin: v.auto_linkedin === "yes", full_rhythm: v.full_rhythm === "yes", proof_consent: v.proof_consent === "yes", partner_enabled: v.partner_enabled === "yes",
           content_targets: Object.fromEntries(["LinkedIn", "Instagram", "Facebook"].map((channel) => [channel, Number(v[`posts_${channel}`])])),
-          rhythm: rhythmPlan(s.id).map((_, i) => ({ time: v[`rhythm_time_${i}`], on: v[`rhythm_on_${i}`] === "yes" })),
+          rhythm: v.rhythm,
           targeting: { ...t, categories: v.industries.split(",").map((x) => x.trim()).filter(Boolean), countries: v.countries.split(",").map((x) => x.trim()).filter(Boolean), keywords: v.keywords, titles: v.titles, exclusions: v.exclusions, employee_min: v.employee_min, employee_max: v.employee_max, goal: v.objective } }) }),
       }); return;
     }
@@ -1027,7 +1025,9 @@ $("editor-form").addEventListener("submit", async (e) => {
   const form = e.target;
   if (!form.reportValidity()) return;
   const values = {};
-  for (const f of S.editor.fields) values[f.name] = form.elements[f.name].value.trim();
+  for (const f of S.editor.fields) values[f.name] = f.type === "rhythm"
+    ? f.value.map((_, i) => ({ on: form.elements[`rhythm_on_${i}`].checked, time: form.elements[`rhythm_time_${i}`].value }))
+    : form.elements[f.name].value.trim();
   try {
     await run(() => S.editor.submit(values), "Saved.");
     $("editor").close();
