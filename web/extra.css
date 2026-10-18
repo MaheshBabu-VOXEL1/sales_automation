@@ -168,3 +168,5 @@ tr.off td { opacity: .5; }
 .tl-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tl::before { z-index: 1; }
 .tl-node, .tl-now-dot { z-index: 2; }
+.tl-setup { margin: 0 22px 14px; }
+@media (max-width: 720px) { .tl-setup { margin: 0 16px 12px; } }

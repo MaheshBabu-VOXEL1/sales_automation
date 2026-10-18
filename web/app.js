@@ -308,7 +308,7 @@ function rhythmResult(s, index, scheduled) {
   const job = S.growth.jobs.find((j) => j.service === s.id && j.day === day && j.job === `rhythm:${index}`);
   const info = (cls, label, note = "", extra = {}) => ({ cls, label, note, outputs: [], issues: [], job, ...extra });
   if (!rhythmPlan(s.id)[index].on) return info("later", "Off", "Turned off in Sales Goal.");
-  if (!campaign?.full_rhythm) return info("later", "Automation off", "Turn on Complete draft rhythm in Sales Goal.");
+  if (!campaign?.full_rhythm) return info("later", "Not started", "Save the Sales Goal (Edit rhythm) to start the automated rhythm.");
   if (!job) {
     if (paused(s.id)) return info("you", "Paused", "The workspace is paused. Resume it to run this activity.");
     if (day < campaign.start || (campaign.end && day > campaign.end)) return info("later", "Outside campaign dates", "Today is outside the campaign start and end dates in Sales Goal.");
@@ -325,6 +325,12 @@ function rhythmResult(s, index, scheduled) {
   if (job.state === "needs_you") return info("you", "Failed", result.message, extra);
   return info("done", "Done", extra.outputs.length ? "" : result.message, extra);
 }
+
+const SETUP_NAMES = {
+  APOLLO_API_KEY: "Apollo key (finds companies)", BRAVE_SEARCH_API_KEY: "Brave key (web research)", GEMINI_API_KEY: "Gemini key (writes drafts)",
+  VOXEL1_MONTHLY_SEARCH_LIMIT: "monthly search limit", VOXEL1_MONTHLY_APOLLO_REQUESTS: "monthly Apollo limit",
+  VOXEL1_MONTHLY_BRAVE_REQUESTS: "monthly Brave limit", VOXEL1_MONTHLY_GEMINI_REQUESTS: "monthly Gemini limit",
+};
 
 function rhythm(s) {
   const schedule = S.growth.rhythm_settings.find((r) => r.service === s.id);
@@ -373,6 +379,7 @@ function rhythm(s) {
   return `<section class="panel tl-panel">
     <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">${done} of ${on} done today${waiting ? ` · <b class="tl-hl">${waiting} waiting for you</b>` : ""}${stuck ? ` · <b class="tl-hl">${stuck} need${stuck === 1 ? "s" : ""} attention</b>` : ""}. Click an activity to see what happened and read its drafts. Times IST.</span></div>
       <div class="actions"><button class="btn" type="button" data-act="campaign">Edit rhythm</button>${schedule.enabled ? '<button class="btn" type="button" data-act="auto-rhythm">Turn off daily planning</button>' : ""}</div></div>
+    ${S.growth.automation_missing?.length || !S.growth.research_storage_allowed ? `<p class="stopped tl-setup"><b>The automation cannot run until the server has:</b> ${[...(S.growth.automation_missing || []).map((k) => SETUP_NAMES[k] || k), ...(S.growth.research_storage_allowed ? [] : ["confirmation that the Brave plan allows storing results (BRAVE_SEARCH_STORAGE_ALLOWED=1)"])].map(esc).join(" · ")}. These are set on the hosting server (Render), not in the app.</p>` : ""}
     <ol class="tl">${items.join("")}</ol>
   </section>`;
 }
@@ -919,7 +926,6 @@ async function act(el) {
           { name: "goal", label: "Quarterly target (won sales)", type: "number", min: 0, value: st.goal, required: true },
           { name: "quarter", label: "Sales quarter (YYYY-Q1 to YYYY-Q4)", value: c?.quarter || `${year}-Q${Math.ceil(month / 3)}`, required: true, max: 7 },
           { name: "strategy", label: "Strategy", type: "textarea", rows: 3, max: 1000, value: st.strategy, full: true },
-          { name: "full_rhythm", label: "Complete draft rhythm", type: "select", options: [["no", "Keep current discovery / selected drafting"], ["yes", "Automate all rhythm activities up to review drafts"]], value: c?.full_rhythm ? "yes" : "no", full: true },
           { name: "rhythm", label: "Daily rhythm (tick to run, set the IST time)", type: "rhythm", value: rhythmPlan(s.id) },
           { name: "objective", label: "Service focus and campaign objective", value: c?.objective || t.goal || "", required: true, max: 500, full: true },
           { name: "countries", label: "Target countries (comma separated)", value: t.countries.join(", "), required: true },
@@ -941,11 +947,9 @@ async function act(el) {
           { name: "end", label: "End date (blank = ongoing)", type: "date", value: c?.end || "", optional: true },
           { name: "search_time", label: "Daily discovery (IST)", type: "time", value: c?.search_time || "06:00", required: true },
           { name: "draft_time", label: "Daily drafts (IST)", type: "time", value: c?.draft_time || (s.id === "bim" ? "09:00" : "10:00"), required: true },
-          { name: "auto_rooms", label: "AI lead-room drafts", type: "select", options: [["no", "Manual only"], ["yes", "Prepare automatically for screened leads"]], value: c?.auto_rooms ? "yes" : "no" },
-          { name: "auto_linkedin", label: "AI LinkedIn text drafts", type: "select", options: [["no", "Manual only"], ["yes", "Prepare daily target automatically"]], value: c?.auto_linkedin ? "yes" : "no" },
           ...["LinkedIn", "Instagram", "Facebook"].map((channel) => ({ name: `posts_${channel}`, label: `${channel} posts per day (0–10)`, type: "number", min: 0, value: c?.content_targets?.[channel] || 0, required: true })),
-        ], submitLabel: "Save Sales Goal and activate",
-        submit: (v) => api(`/api/growth/campaign/${s.id}`, { method: "PUT", body: JSON.stringify({ ...v, goal: Number(v.goal), accept_budget: true, auto_rooms: v.auto_rooms === "yes", auto_linkedin: v.auto_linkedin === "yes", full_rhythm: v.full_rhythm === "yes", proof_consent: v.proof_consent === "yes", partner_enabled: v.partner_enabled === "yes",
+        ], submitLabel: "Save and run the rhythm",
+        submit: (v) => api(`/api/growth/campaign/${s.id}`, { method: "PUT", body: JSON.stringify({ ...v, goal: Number(v.goal), accept_budget: true, auto_rooms: true, auto_linkedin: true, full_rhythm: true, proof_consent: v.proof_consent === "yes", partner_enabled: v.partner_enabled === "yes",
           content_targets: Object.fromEntries(["LinkedIn", "Instagram", "Facebook"].map((channel) => [channel, Number(v[`posts_${channel}`])])),
           rhythm: v.rhythm,
           targeting: { ...t, categories: v.industries.split(",").map((x) => x.trim()).filter(Boolean), countries: v.countries.split(",").map((x) => x.trim()).filter(Boolean), keywords: v.keywords, titles: v.titles, exclusions: v.exclusions, employee_min: v.employee_min, employee_max: v.employee_max, goal: v.objective } }) }),
