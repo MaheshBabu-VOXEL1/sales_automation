@@ -208,7 +208,7 @@ function header(s) {
   const now = paused(s.id)
     ? `<b>Paused.</b> New searches, approvals and task completion are blocked until you resume. A search already running is not cancelled.`
     : next ? `<b>Next:</b> ${esc(next.title)} <span class="muted">· ${esc(fmtWhen(next))}${next.owner ? " · " + esc(next.owner) : ""}</span>`
-      : `<b>No open tasks.</b> View live agent jobs or add today’s task plan from Daily rhythm.`;
+      : `<b>No open tasks.</b> View live agent jobs, or set the rhythm with Edit rhythm.`;
   return `<div class="crumb">Growth Engine <span>/</span> ${S.lead ? `<button type="button" data-act="back">${esc(s.name)}</button> <span>/</span> Lead room` : esc(s.name)}</div>
   <div class="ph">
     <div class="ph-l"><span class="av lg av-${s.id === "training" ? "train" : s.id}">${s.code}</span><div style="min-width:0"><div class="title-row"><h1>${esc(s.name)}</h1>${badge}</div><p>${esc(st.strategy || "No strategy written yet.")}</p></div></div>
@@ -345,18 +345,18 @@ function rhythm(s) {
   };
   return `${agentPanel(s)}<section class="panel">
     <div class="panel-h"><div><h2>${esc(s.name)} daily rhythm</h2><span class="note">${full ? "Runs daily during campaign dates, through review drafts. Sending and publishing are separate." : "Reference schedule; enable Complete draft rhythm in Sales Goal for execution."} All times IST (Asia/Kolkata).</span></div>
-      <div class="actions"><button class="btn" type="button" data-act="campaign">Edit rhythm</button>${full ? "" : `<button class="btn" type="button" data-act="auto-rhythm">${schedule.enabled ? "Disable daily planning" : "Enable daily planning"}</button><button class="btn pri" type="button" data-act="routine">Add rhythm to today’s plan</button>`}</div></div>
+      <div class="actions"><button class="btn" type="button" data-act="campaign">Edit rhythm</button>${schedule.enabled ? '<button class="btn" type="button" data-act="auto-rhythm">Turn off daily planning</button>' : ""}</div></div>
     <div class="tw"><table><thead><tr><th>Time (IST)</th><th>Type</th><th>Activity and purpose</th><th>Draft workflow status</th><th>Outputs / next action</th></tr></thead>
       <tbody>${rhythmPlan(s.id).map((a, index) => ({ ...a, index })).sort((x, y) => x.time.localeCompare(y.time)).map(({ time, label, title, purpose, on, index }) => `<tr${on ? "" : ' class="off"'}><td class="t">${esc(time)}</td><td><span class="ty ${esc(label)}">${esc(label)}</span></td><td><b class="strong">${esc(title)}</b><span class="sub">${esc(purpose)}</span></td>${rhythmResult(s, index, time)}</tr>`).join("")}</tbody>
-    </table></div><div class="panel-f"><span class="note">${full ? "Each activity shows saved drafts, research coverage, or missing input/budget. Review outputs before use. The worker stays available while the server runs and respects pause." : (schedule.enabled ? "Manual task planning enabled for weekdays." : "Manual task planning is disabled.")} Missed days are not backfilled. <a href="/draft-rhythm-guide" target="_blank" rel="noopener">Workflow setup and limits</a></span></div>
+    </table></div><div class="panel-f"><span class="note">${full ? "Each activity shows saved drafts, research coverage, or missing input/budget. Review outputs before use. The worker stays available while the server runs and respects pause." : "Set times and turn activities on or off with Edit rhythm."} Missed days are not backfilled. <a href="/draft-rhythm-guide" target="_blank" rel="noopener">Workflow setup and limits</a></span></div>
   </section>
   <section class="panel">
     <div class="panel-h"><div><h2>Today’s plan</h2><span class="note">Saved tasks and generated drafts awaiting your review.</span></div>
-      <div class="actions"><button class="btn" type="button" data-act="routine">Add rhythm to today’s plan</button><button class="btn pri" type="button" data-act="new-task">New task</button></div></div>
+      <div class="actions"><button class="btn pri" type="button" data-act="new-task">New task</button></div></div>
     <div class="phases">${phases}</div>
     <div class="tw"><table>
       <thead><tr><th>When</th><th>Type</th><th>Activity</th><th>Owner</th><th>Status</th></tr></thead>
-      <tbody>${rows.length ? rows.map(row).join("") : `<tr><td colspan="5" class="empty-cell">Nothing planned for today. Use <b>New task</b>, or <b>Add rhythm to today’s plan</b> to create the reference rhythm tasks for ${esc(s.name)}.</td></tr>`}</tbody>
+      <tbody>${rows.length ? rows.map(row).join("") : `<tr><td colspan="5" class="empty-cell">Nothing planned for today. Use <b>New task</b> for anything the rhythm does not cover.</td></tr>`}</tbody>
     </table></div>
     <div class="panel-f"><label class="fshow"><input type="checkbox" id="show-done-tasks" ${S.showDoneTasks ? "checked" : ""}> Show all completed and skipped tasks</label></div>
   </section>
